@@ -14,6 +14,33 @@ from depthyn.mmdet3d_replay import (
 
 
 class MMDet3DReplayTests(unittest.TestCase):
+    def test_run_mmdet3d_manifest_inference_rejects_missing_python_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifest.json"
+            config_path = root / "centerpoint.py"
+            checkpoint_path = root / "centerpoint.pth"
+
+            manifest_path.write_text(json.dumps({"frames": []}), encoding="utf-8")
+            config_path.write_text("# config placeholder\n", encoding="utf-8")
+            checkpoint_path.write_text("checkpoint placeholder\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Python executable does not exist",
+            ):
+                run_mmdet3d_manifest_inference(
+                    manifest_path=manifest_path,
+                    output_path=root / "predictions.json",
+                    backend_python="/path/to/mmdet3d-env/bin/python",
+                    backend_repo=None,
+                    config_path=config_path,
+                    checkpoint_path=checkpoint_path,
+                    score_threshold=0.35,
+                    model_name="centerpoint",
+                    device="cuda:0",
+                )
+
     def test_run_mmdet3d_manifest_inference_reads_normalized_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,69 @@ from depthyn.ml_prep import export_ml_replay_bundle
 
 class MMDet3DReplayError(RuntimeError):
     """Raised when the external MMDetection3D replay runner fails."""
+
+
+def _validate_runtime_paths(
+    *,
+    manifest_path: Path,
+    backend_python: str | None,
+    backend_repo: Path | None,
+    config_path: Path | None,
+    checkpoint_path: Path | None,
+) -> tuple[Path, Path, Path | None, Path]:
+    if not manifest_path.exists():
+        raise MMDet3DReplayError(f"Manifest does not exist: {manifest_path}")
+
+    python_executable = backend_python or sys.executable
+    if backend_python:
+        if "/" in backend_python:
+            python_path = Path(backend_python)
+            if not python_path.exists():
+                raise MMDet3DReplayError(
+                    "MMDetection3D Python executable does not exist. "
+                    f"Replace the placeholder with a real path: {python_path}"
+                )
+            normalized_python = python_path
+        else:
+            resolved = shutil.which(backend_python)
+            if resolved is None:
+                raise MMDet3DReplayError(
+                    "MMDetection3D Python executable was not found on PATH. "
+                    f"Replace the placeholder with a real path or install the command: {backend_python}"
+                )
+            normalized_python = Path(resolved)
+    else:
+        normalized_python = Path(sys.executable)
+
+    if not normalized_python.exists():
+        raise MMDet3DReplayError(
+            "MMDetection3D Python executable does not exist. "
+            f"Replace the placeholder with a real path: {normalized_python}"
+        )
+
+    if config_path is None:
+        raise MMDet3DReplayError("MMDetection3D manifest inference requires --ml-config.")
+    if not config_path.exists():
+        raise MMDet3DReplayError(f"MMDetection3D config does not exist: {config_path}")
+
+    if checkpoint_path is None:
+        raise MMDet3DReplayError(
+            "MMDetection3D manifest inference requires --ml-checkpoint."
+        )
+    if not checkpoint_path.exists():
+        raise MMDet3DReplayError(
+            f"MMDetection3D checkpoint does not exist: {checkpoint_path}"
+        )
+
+    normalized_repo = None
+    if backend_repo is not None:
+        normalized_repo = Path(backend_repo)
+        if not normalized_repo.exists():
+            raise MMDet3DReplayError(
+                f"MMDetection3D repo path does not exist: {normalized_repo}"
+            )
+
+    return normalized_python, config_path, normalized_repo, checkpoint_path
 
 
 def run_mmdet3d_manifest_inference(
@@ -26,26 +90,32 @@ def run_mmdet3d_manifest_inference(
     model_name: str,
     device: str,
 ) -> dict[str, object]:
-    if config_path is None:
-        raise MMDet3DReplayError("MMDetection3D manifest inference requires --ml-config.")
-    if checkpoint_path is None:
-        raise MMDet3DReplayError(
-            "MMDetection3D manifest inference requires --ml-checkpoint."
-        )
+    (
+        python_path,
+        normalized_config_path,
+        normalized_repo,
+        normalized_checkpoint_path,
+    ) = _validate_runtime_paths(
+        manifest_path=manifest_path,
+        backend_python=backend_python,
+        backend_repo=backend_repo,
+        config_path=config_path,
+        checkpoint_path=checkpoint_path,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     runner_path = Path(__file__).resolve().parents[2] / "tools" / "mmdet3d_runner.py"
     command = [
-        backend_python or sys.executable,
+        str(python_path),
         str(runner_path),
         "--manifest-json",
         str(manifest_path),
         "--output-json",
         str(output_path),
         "--config",
-        str(config_path),
+        str(normalized_config_path),
         "--checkpoint",
-        str(checkpoint_path),
+        str(normalized_checkpoint_path),
         "--score-threshold",
         str(score_threshold),
         "--model-name",
@@ -53,8 +123,8 @@ def run_mmdet3d_manifest_inference(
         "--device",
         device,
     ]
-    if backend_repo is not None:
-        command.extend(["--mmdet3d-repo", str(backend_repo)])
+    if normalized_repo is not None:
+        command.extend(["--mmdet3d-repo", str(normalized_repo)])
 
     completed = subprocess.run(
         command,
