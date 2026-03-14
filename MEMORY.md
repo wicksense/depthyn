@@ -141,6 +141,14 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
   - orchestration logic is tested with mocked MMDetection3D execution
 - Not yet verified locally for Stage 1b model execution:
   - real `CenterPoint` inference has not run in this shell yet because the required external MMDetection3D environment is still not available here
+- Current checked blockers for real Stage 1b execution:
+  - `.miniforge3/envs/depthyn-mmdet3d` exists
+  - `.mmdet3d` repo checkout exists
+  - a valid local CenterPoint config exists
+  - no local CenterPoint checkpoint file was found
+  - the env currently fails real MMDetection3D use because `mmcv` is missing
+  - `mmdet` and `mmdet3d` imports fail as a consequence
+  - `torch` import works, but the env shows a NumPy 2.x compatibility warning that likely needs `numpy<2`
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
@@ -301,8 +309,35 @@ Depthyn will be built in this order and tackled one stage at a time.
 
 ## Current Next Step
 - Execute Stage 1 first:
-  - Stage 1a is now in place
-  - Stage 1b orchestration is now in place
-  - next is the first verified real `CenterPoint` run on recorded replay
-  - compare it against the baseline using the new batch MMDetection3D path
-  - keep source ingestion work for the following stage unless ML setup blocks progress
+  - Stage 1a is in place
+  - Stage 1b orchestration is in place
+  - Stage 1b environment repair is now complete:
+    - rebuilt `depthyn-mmdet3d` from scratch
+    - installed `torch 2.0.1+cu118` and verified GPU visibility
+    - built `mmcv 2.0.0` from source locally
+    - installed `mmdet 3.2.0`
+    - installed local `mmdet3d 1.4.0`
+    - verified imports for `torch`, `mmengine`, `mmcv`, `mmdet`, and `mmdet3d`
+  - next is the first real model run:
+    - obtain a matching CenterPoint checkpoint
+    - run `compare-mmdet3d-replay` on recorded replay
+    - compare CenterPoint against the baseline
+  - keep source ingestion work for the following stage unless model execution blocks progress
+
+## Current ML Environment
+- Env name: `depthyn-mmdet3d`
+- Verified versions:
+  - `torch 2.0.1+cu118`
+  - `mmengine 0.10.7`
+  - `mmcv 2.0.0`
+  - `mmdet 3.2.0`
+  - `mmdet3d 1.4.0`
+- Verified GPU:
+  - `torch.cuda.is_available() == True`
+  - `NVIDIA RTX 4000 Ada Generation`
+- Important build details for this VM:
+  - OpenMMLab wheel downloads were not usable here
+  - `mmcv` had to be built from local source
+  - `CUDA_HOME` had to point at `.miniforge3/envs/depthyn-mmdet3d/targets/x86_64-linux`
+  - `nvvm/bin` had to be added to `PATH` so `nvcc` could find `cicc`
+  - CUDA 11.8 needed `gcc/g++ 11.4` in the env

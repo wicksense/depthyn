@@ -1,39 +1,106 @@
 # MMDetection3D Setup
 
+This is the setup path that was actually verified on this VM.
+
 Depthyn keeps the ML backend out of the main project environment on purpose.
 MMDetection3D is treated as an optional detector host, not as the foundation of
 the repo.
 
-If you want to use MMDetection3D during Stage 1, the cleanest flow is:
-- export replay frames with `depthyn prepare-ml-replay`
-- run MMDetection3D externally on those frames
-- import the normalized detections back through the `precomputed` detector path
+## Proven Environment Bring-Up
 
-That means you can bring up MMDetection3D once, point Depthyn at that Python,
-and keep the replay/viewer tooling lightweight.
-
-## Suggested Environment
-
-These are the commands I expect you to run manually on this VM when we are
-ready for the real ML backend:
+Run from `/home/spriteadmin/Documents/LiDAR-Object-Detection`.
 
 ```bash
 /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/bin/mamba create -y -n depthyn-mmdet3d python=3.10 pip
+
 source /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/etc/profile.d/conda.sh
 conda activate depthyn-mmdet3d
-/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/bin/mamba install -y -n depthyn-mmdet3d -c pytorch -c nvidia -c conda-forge pytorch torchvision pytorch-cuda=12.1
-python -m pip install -U openmim
-mim install "mmengine>=0.10.0"
-mim install "mmcv>=2.1.0"
-mim install "mmdet>=3.3.0"
-python -m pip install mmdet3d
-git clone https://github.com/open-mmlab/mmdetection3d.git /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmdet3d
+
+python -m pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118
+python -m pip install "setuptools<81" mmengine==0.10.7 addict yapf rich termcolor pycocotools cmake ninja psutil
+
+/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/bin/mamba install -y -n depthyn-mmdet3d -c nvidia cuda-toolkit=11.8 cuda-nvcc=11.8
+/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/bin/mamba install -y -n depthyn-mmdet3d -c conda-forge gcc_linux-64=11.4.0 gxx_linux-64=11.4.0
 ```
 
-Why clone the repo even if `mmdet3d` is installed:
-- it gives us direct access to official config files
-- project-based models like `DSVT` often live under `projects/`
-- Depthyn can add the repo to `PYTHONPATH` during inference with `--mmdet3d-repo`
+Clone the helper repos if they do not already exist:
+
+```bash
+git clone https://github.com/open-mmlab/mmcv.git -b 2.x /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmcv
+git clone https://github.com/open-mmlab/mmdetection3d.git -b dev-1.x /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmdet3d
+```
+
+Build and install `mmcv` from source:
+
+```bash
+source /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/etc/profile.d/conda.sh
+conda activate depthyn-mmdet3d
+
+cd /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmcv
+
+export CUDA_HOME=/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/targets/x86_64-linux
+export PATH="$CUDA_HOME/bin:/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/nvvm/bin:/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib:/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/lib:${LD_LIBRARY_PATH}"
+export MMCV_WITH_OPS=1
+export FORCE_CUDA=1
+export TORCH_CUDA_ARCH_LIST="8.9"
+export MAX_JOBS=4
+export PIP_USE_PEP517=0
+
+python -m pip install -v . --no-build-isolation
+```
+
+Install `mmdet` and `mmdet3d`:
+
+```bash
+source /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/etc/profile.d/conda.sh
+conda activate depthyn-mmdet3d
+
+python -m pip install "mmdet>=3.0.0,<3.3.0"
+
+cd /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmdet3d
+python -m pip install -v -e . --no-build-isolation
+```
+
+## Verify The Environment
+
+```bash
+source /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/etc/profile.d/conda.sh
+conda activate depthyn-mmdet3d
+
+export CUDA_HOME=/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/targets/x86_64-linux
+export PATH="$CUDA_HOME/bin:/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/nvvm/bin:/home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/bin:$PATH"
+
+python - <<'PY'
+import torch, mmengine, mmcv, mmdet, mmdet3d, numpy
+print("torch:", torch.__version__)
+print("torch cuda:", torch.version.cuda)
+print("cuda available:", torch.cuda.is_available())
+print("gpu:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")
+print("numpy:", numpy.__version__)
+print("mmengine:", mmengine.__version__)
+print("mmcv:", mmcv.__version__)
+print("mmdet:", mmdet.__version__)
+print("mmdet3d:", mmdet3d.__version__)
+PY
+```
+
+Verified on this VM:
+- `torch 2.0.1+cu118`
+- `mmengine 0.10.7`
+- `mmcv 2.0.0`
+- `mmdet 3.2.0`
+- `mmdet3d 1.4.0`
+
+## Notes
+
+- `download.openmmlab.com` timed out from this environment, so `mim install mmcv`
+  was not usable here.
+- `mmcv` had to be built from local source.
+- `CUDA_HOME` must point at the toolkit root under `targets/x86_64-linux`, not the
+  env root.
+- `nvvm/bin` must be on `PATH` so `nvcc` can find `cicc`.
+- CUDA 11.8 needed `gcc/g++ 11.4` in the env for the build to succeed.
 
 ## Depthyn Usage
 

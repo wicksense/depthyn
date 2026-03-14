@@ -8,5 +8,6 @@ SampleData/
 .miniforge3/
 .openpcdet/
 .mmdet3d/
+.mmcv/
 .ml-venv-test/
 checkpoints/
