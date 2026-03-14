@@ -45,25 +45,26 @@ contracts without blocking on ML training or model integration.
 
 Replay now routes detections through a detector abstraction:
 - `baseline`: built-in clustering detector using foreground occupancy clusters
-- `pointpillars`: optional OpenPCDet-backed detector
-- `centerpoint`: optional OpenPCDet-backed detector
+- `centerpoint`: optional MMDetection3D-backed detector
+- `dsvt`: optional MMDetection3D-backed detector
+- `pointpillars`: optional MMDetection3D-backed detector
 
 The key design point is that tracking, replay summaries, and the viewer do not
 care which detector produced the boxes. That lets us compare a no-ML baseline
 against learned 3D detectors without changing the rest of the stack.
 
-## OpenPCDet Adapter
+## MMDetection3D Adapter
 
 The ML adapter is intentionally out-of-process:
 - Depthyn serializes the current frame to a temp JSON payload
-- an external Python executable in an OpenPCDet environment runs
-  `tools/openpcdet_runner.py`
+- an external Python executable in an MMDetection3D environment runs
+  `tools/mmdet3d_runner.py`
 - the runner loads the model, performs inference, and writes normalized JSON
   detections back to Depthyn
 
 Why use an out-of-process adapter:
 - the main Depthyn environment is currently dependency-light
-- PointPillars and CenterPoint need `torch`, `numpy`, and the OpenPCDet stack
+- modern 3D detectors need `torch`, `numpy`, and the MMDetection3D stack
 - it keeps the replay and viewer tooling usable even before the ML environment
   is installed
 
@@ -91,7 +92,7 @@ data now, before the larger API and operator UI arrive.
 
 ## Next Layers
 
-- native ML environment bootstrap so PointPillars and CenterPoint can run locally
+- native ML environment bootstrap so CenterPoint and DSVT can run locally
 - zone rules and alerts
 - replay timeline and event storage
 - REST/WebSocket API

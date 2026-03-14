@@ -10,29 +10,29 @@ from depthyn.pipeline import run_replay, write_summary
 from depthyn.viewer import serve_viewer
 
 
-def _add_openpcdet_options(parser: argparse.ArgumentParser) -> None:
+def _add_mmdet3d_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--openpcdet-python",
+        "--mmdet3d-python",
         default=None,
-        help="Python executable inside the OpenPCDet environment.",
+        help="Python executable inside the MMDetection3D environment.",
     )
     parser.add_argument(
-        "--openpcdet-repo",
+        "--mmdet3d-repo",
         type=Path,
         default=None,
-        help="Path to an OpenPCDet repository checkout.",
+        help="Optional path to an MMDetection3D repository checkout.",
     )
     parser.add_argument(
         "--ml-config",
         type=Path,
         default=None,
-        help="Model config file for PointPillars or CenterPoint.",
+        help="Model config file for CenterPoint, DSVT, or another MMDetection3D model.",
     )
     parser.add_argument(
         "--ml-checkpoint",
         type=Path,
         default=None,
-        help="Checkpoint file for PointPillars or CenterPoint.",
+        help="Checkpoint file for the selected MMDetection3D model.",
     )
     parser.add_argument(
         "--ml-score-threshold",
@@ -40,23 +40,30 @@ def _add_openpcdet_options(parser: argparse.ArgumentParser) -> None:
         default=0.25,
         help="Score threshold applied to ML detector outputs.",
     )
+    parser.add_argument(
+        "--ml-device",
+        default="cuda:0",
+        help="Torch device passed through to MMDetection3D, for example cuda:0 or cpu.",
+    )
 
 
 def _build_detector_config(
     kind: str,
-    openpcdet_python: str | None,
-    openpcdet_repo: Path | None,
+    backend_python: str | None,
+    backend_repo: Path | None,
     config_path: Path | None,
     checkpoint_path: Path | None,
     score_threshold: float,
+    device: str,
 ) -> DetectorConfig:
     return DetectorConfig(
         kind=kind,
-        openpcdet_python=openpcdet_python,
-        openpcdet_repo=openpcdet_repo,
+        backend_python=backend_python,
+        backend_repo=backend_repo,
         config_path=config_path,
         checkpoint_path=checkpoint_path,
         score_threshold=score_threshold,
+        device=device,
     )
 
 
@@ -64,28 +71,41 @@ def _build_compare_detector_config(name: str, args: argparse.Namespace) -> Detec
     if name == "pointpillars":
         return _build_detector_config(
             name,
-            args.openpcdet_python,
-            args.openpcdet_repo,
+            args.mmdet3d_python,
+            args.mmdet3d_repo,
             args.pointpillars_config,
             args.pointpillars_checkpoint,
             args.ml_score_threshold,
+            args.ml_device,
         )
     if name == "centerpoint":
         return _build_detector_config(
             name,
-            args.openpcdet_python,
-            args.openpcdet_repo,
+            args.mmdet3d_python,
+            args.mmdet3d_repo,
             args.centerpoint_config,
             args.centerpoint_checkpoint,
             args.ml_score_threshold,
+            args.ml_device,
+        )
+    if name == "dsvt":
+        return _build_detector_config(
+            name,
+            args.mmdet3d_python,
+            args.mmdet3d_repo,
+            args.dsvt_config,
+            args.dsvt_checkpoint,
+            args.ml_score_threshold,
+            args.ml_device,
         )
     return _build_detector_config(
         name,
-        args.openpcdet_python,
-        args.openpcdet_repo,
+        args.mmdet3d_python,
+        args.mmdet3d_repo,
         None,
         None,
         args.ml_score_threshold,
+        args.ml_device,
     )
 
 
@@ -140,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_parser.add_argument(
         "--detector",
-        choices=("baseline", "pointpillars", "centerpoint"),
+        choices=("baseline", "pointpillars", "centerpoint", "dsvt"),
         default="baseline",
         help="Detection backend to run during replay.",
     )
@@ -150,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=1200,
         help="Maximum downsampled points per frame to embed for viewer playback.",
     )
-    _add_openpcdet_options(replay_parser)
+    _add_mmdet3d_options(replay_parser)
 
     compare_parser = subparsers.add_parser(
         "compare",
@@ -183,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--detectors",
         nargs="+",
         default=["baseline"],
-        choices=("baseline", "pointpillars", "centerpoint"),
+        choices=("baseline", "pointpillars", "centerpoint", "dsvt"),
         help="Detector backends to run side by side.",
     )
     compare_parser.add_argument(
@@ -214,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--pointpillars-config",
         type=Path,
         default=None,
-        help="OpenPCDet config for PointPillars.",
+        help="MMDetection3D config for PointPillars.",
     )
     compare_parser.add_argument(
         "--pointpillars-checkpoint",
@@ -226,7 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--centerpoint-config",
         type=Path,
         default=None,
-        help="OpenPCDet config for CenterPoint.",
+        help="MMDetection3D config for CenterPoint.",
     )
     compare_parser.add_argument(
         "--centerpoint-checkpoint",
@@ -234,7 +254,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Checkpoint for CenterPoint.",
     )
-    _add_openpcdet_options(compare_parser)
+    compare_parser.add_argument(
+        "--dsvt-config",
+        type=Path,
+        default=None,
+        help="MMDetection3D config for DSVT.",
+    )
+    compare_parser.add_argument(
+        "--dsvt-checkpoint",
+        type=Path,
+        default=None,
+        help="Checkpoint for DSVT.",
+    )
+    _add_mmdet3d_options(compare_parser)
 
     serve_parser = subparsers.add_parser(
         "serve-viewer",
@@ -273,11 +305,12 @@ def main(argv: list[str] | None = None) -> int:
             preview_point_limit=args.preview_points,
             detector=_build_detector_config(
                 args.detector,
-                args.openpcdet_python,
-                args.openpcdet_repo,
+                args.mmdet3d_python,
+                args.mmdet3d_repo,
                 args.ml_config,
                 args.ml_checkpoint,
                 args.ml_score_threshold,
+                args.ml_device,
             ),
             voxel_size_m=args.voxel_size,
             cluster_cell_size_m=args.cluster_cell_size,

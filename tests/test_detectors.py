@@ -31,7 +31,18 @@ class DetectorTests(unittest.TestCase):
                 )
             )
 
-    def test_comparison_reports_missing_openpcdet_config_cleanly(self) -> None:
+    def test_factory_builds_mmdet3d_detector(self) -> None:
+        detector = create_detector(
+            ReplayConfig(
+                input_dir=Path("."),
+                output_json=Path("summary.json"),
+                detector=DetectorConfig(kind="dsvt"),
+            )
+        )
+        self.assertEqual(detector.name, "dsvt")
+        self.assertEqual(detector.input_mode, "full")
+
+    def test_comparison_reports_missing_mmdet3d_config_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             frame = root / "frame_0001.csv"
@@ -61,7 +72,7 @@ class DetectorTests(unittest.TestCase):
                 ),
                 [
                     DetectorConfig(kind="baseline"),
-                    DetectorConfig(kind="pointpillars"),
+                    DetectorConfig(kind="dsvt"),
                 ],
                 root / "comparison",
             )
@@ -69,7 +80,7 @@ class DetectorTests(unittest.TestCase):
             self.assertEqual(len(comparison["detector_runs"]), 2)
             self.assertEqual(comparison["detector_runs"][0]["status"], "ok")
             self.assertEqual(comparison["detector_runs"][1]["status"], "error")
-            self.assertIn("requires --openpcdet-repo", comparison["detector_runs"][1]["error"])
+            self.assertIn("requires a model config path", comparison["detector_runs"][1]["error"])
 
 
 if __name__ == "__main__":

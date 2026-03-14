@@ -5,3 +5,8 @@ __pycache__/
 venv/
 artifacts/
 SampleData/
+.miniforge3/
+.openpcdet/
+.mmdet3d/
+.ml-venv-test/
+checkpoints/

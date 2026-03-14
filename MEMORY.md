@@ -1,6 +1,6 @@
 # Project Memory
 
-Last updated: 2026-03-13
+Last updated: 2026-03-14
 
 ## Goal
 Build an open source LiDAR perception platform inspired by Ouster Gemini, using `/home/spriteadmin/Documents/LiDAR-Object-Detection` as the working directory and leveraging the VM GPU for local development and evaluation.
@@ -79,29 +79,38 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
   - `artifacts/sampledata-26-summary.json` served successfully over local HTTP
 - Added a detector abstraction layer:
   - baseline clustering detector is now a first-class backend
-  - optional OpenPCDet-backed detector adapter added for `PointPillars` and `CenterPoint`
+  - optional MMDetection3D-backed detector adapter planned for `CenterPoint` and `DSVT`
   - `compare` command added for side-by-side detector runs
-- Added helper runner script: `tools/openpcdet_runner.py`
+- Added helper runner script pattern for out-of-process ML execution
 - Current shell environment is still dependency-light:
   - no `pip`
   - no `numpy`
   - no `torch`
-  - no `OpenPCDet`
-- ML detector execution therefore depends on a separate OpenPCDet-capable Python environment
+  - no `MMDetection3D`
+- ML detector execution therefore depends on a separate MMDetection3D-capable Python environment
 - Verified locally:
   - `replay --detector baseline` runs successfully on sample data
   - `compare --detectors baseline pointpillars` writes a comparison report
-  - unconfigured `pointpillars` currently reports a clean configuration error instead of aborting the run
+  - unconfigured ML backends currently report clean configuration errors instead of aborting the run
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
-- MVP detector candidate: `PointPillars` or `CenterPoint`
+- Active backend choice: `MMDetection3D`
+- Practical baseline detector: `CenterPoint`
+- Modern detector candidate: `DSVT`
+- Optional speed/reference detector: `PointPillars`
 - Tracking candidate: lightweight 3D Kalman/Hungarian tracker or CenterPoint tracking-style association
 - Zones, alerts, counts, and replay are application logic on top of tracks, not separate ML models
 - MVP deployment target is a single LiDAR sensor
 - Multi-sensor fusion is a later feature, not an initial requirement
 - If/when multi-sensor is added, begin with geometric registration plus track fusion, not learned fusion
 - Product framing should stay broad enough for both fixed and mobile capture/replay
+
+## Backend Pivot
+- OpenPCDet install/debug effort was high relative to value for this project
+- User wants to avoid burning Codex limits on repeated heavy installs and is willing to run install commands directly when needed
+- Repo is being refactored away from OpenPCDet toward MMDetection3D
+- Local cleanup removed the temporary `.openpcdet` checkout and Miniforge installer script
 
 ## Open Questions
 - Which Gemini features should be in MVP vs later phases?

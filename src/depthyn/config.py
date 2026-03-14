@@ -8,19 +8,20 @@ from pathlib import Path
 class DetectorConfig:
     kind: str = "baseline"
     label: str | None = None
-    openpcdet_python: str | None = None
-    openpcdet_repo: Path | None = None
+    backend_python: str | None = None
+    backend_repo: Path | None = None
     config_path: Path | None = None
     checkpoint_path: Path | None = None
     score_threshold: float = 0.25
+    device: str = "cuda:0"
 
     def resolved_label(self) -> str:
         return self.label or self.kind
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
-        if self.openpcdet_repo is not None:
-            payload["openpcdet_repo"] = str(self.openpcdet_repo)
+        if self.backend_repo is not None:
+            payload["backend_repo"] = str(self.backend_repo)
         if self.config_path is not None:
             payload["config_path"] = str(self.config_path)
         if self.checkpoint_path is not None:

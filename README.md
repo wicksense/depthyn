@@ -18,7 +18,7 @@ the platform comes online.
 - downsample and filter LiDAR frames
 - build a simple non-ML baseline using clustering + tracking
 - expose a pluggable detector interface for ML backends
-- compare the baseline against optional PointPillars or CenterPoint runs
+- compare the baseline against optional MMDetection3D runs
 - write JSON replay bundles for downstream API/UI work
 - serve a browser replay viewer for recorded sessions
 
@@ -50,8 +50,9 @@ Then open the printed URL.
 
 Depthyn now supports detector selection during replay:
 - `baseline`: built-in clustering detector
-- `pointpillars`: optional OpenPCDet adapter
-- `centerpoint`: optional OpenPCDet adapter
+- `centerpoint`: optional MMDetection3D adapter
+- `dsvt`: optional MMDetection3D adapter
+- `pointpillars`: optional MMDetection3D adapter
 
 Baseline replay:
 
@@ -70,28 +71,31 @@ Side-by-side comparison report:
 PYTHONPATH=src python3 -m depthyn.cli compare \
   SampleData/output-26/converted_csv \
   --output-dir artifacts/detector-comparison \
-  --detectors baseline pointpillars centerpoint \
-  --openpcdet-repo /path/to/OpenPCDet \
-  --openpcdet-python /path/to/openpcdet-env/bin/python \
-  --pointpillars-config /path/to/pointpillars.yaml \
-  --pointpillars-checkpoint /path/to/pointpillars.pth \
-  --centerpoint-config /path/to/centerpoint.yaml \
-  --centerpoint-checkpoint /path/to/centerpoint.pth
+  --detectors baseline centerpoint dsvt \
+  --mmdet3d-python /path/to/mmdet3d-env/bin/python \
+  --mmdet3d-repo /path/to/mmdetection3d \
+  --centerpoint-config /path/to/centerpoint.py \
+  --centerpoint-checkpoint /path/to/centerpoint.pth \
+  --dsvt-config /path/to/dsvt.py \
+  --dsvt-checkpoint /path/to/dsvt.pth
 ```
 
-If the OpenPCDet environment is not configured yet, the comparison report will
+If the MMDetection3D environment is not configured yet, the comparison report will
 still run and mark the ML detectors as configuration errors instead of failing
 the whole command.
 
-## OpenPCDet Notes
+Manual backend setup lives in [docs/mmdet3d_setup.md](/home/spriteadmin/Documents/LiDAR-Object-Detection/docs/mmdet3d_setup.md).
 
-The PointPillars and CenterPoint adapters are designed around OpenPCDet. The
-current repo does not vendor or install OpenPCDet automatically. Instead,
-Depthyn shells out to `tools/openpcdet_runner.py` using the Python executable
-from an existing OpenPCDet-capable environment.
+## MMDetection3D Notes
+
+The current ML adapters target MMDetection3D rather than OpenPCDet. Depthyn
+does not vendor or install MMDetection3D automatically. Instead, Depthyn
+shells out to `tools/mmdet3d_runner.py` using the Python executable from an
+existing MMDetection3D-capable environment.
 
 That keeps the core project lightweight while still giving us a concrete path
-to compare the non-ML baseline against current 3D detectors.
+to compare the non-ML baseline against modern 3D detectors such as CenterPoint
+and DSVT.
 
 ## Why Start With A Non-ML Baseline?
 
@@ -102,7 +106,7 @@ source -> frame assembly -> filtering -> detections -> tracks -> zones/alerts ->
 ```
 
 The baseline in this repo gets that full loop working before we choose and tune
-heavier 3D detection models such as PointPillars or CenterPoint.
+heavier 3D detection models such as CenterPoint or DSVT.
 
 ## Repository Layout
 

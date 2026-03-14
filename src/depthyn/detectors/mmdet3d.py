@@ -11,7 +11,7 @@ from depthyn.detectors.base import DetectorResult, DetectorUnavailableError
 from depthyn.models import Detection, Frame
 
 
-class OpenPCDetDetector:
+class MMDet3DDetector:
     input_mode = "full"
 
     def __init__(self, detector_config: DetectorConfig) -> None:
@@ -21,8 +21,8 @@ class OpenPCDetDetector:
     def detect(self, frame: Frame, points: list[tuple[float, float, float]]) -> DetectorResult:
         self._validate()
 
-        runner_path = Path(__file__).resolve().parents[3] / "tools" / "openpcdet_runner.py"
-        with tempfile.TemporaryDirectory(prefix="depthyn-openpcdet-") as temp_dir:
+        runner_path = Path(__file__).resolve().parents[3] / "tools" / "mmdet3d_runner.py"
+        with tempfile.TemporaryDirectory(prefix="depthyn-mmdet3d-") as temp_dir:
             temp_root = Path(temp_dir)
             input_path = temp_root / "frame.json"
             output_path = temp_root / "predictions.json"
@@ -35,10 +35,8 @@ class OpenPCDetDetector:
             input_path.write_text(json.dumps(input_payload), encoding="utf-8")
 
             command = [
-                self._config.openpcdet_python or sys.executable,
+                self._config.backend_python or sys.executable,
                 str(runner_path),
-                "--openpcdet-repo",
-                str(self._config.openpcdet_repo),
                 "--config",
                 str(self._config.config_path),
                 "--checkpoint",
@@ -51,7 +49,12 @@ class OpenPCDetDetector:
                 str(self._config.score_threshold),
                 "--model-name",
                 self.name,
+                "--device",
+                self._config.device,
             ]
+            if self._config.backend_repo is not None:
+                command.extend(["--mmdet3d-repo", str(self._config.backend_repo)])
+
             completed = subprocess.run(
                 command,
                 capture_output=True,
@@ -84,7 +87,7 @@ class OpenPCDetDetector:
                 detections=detections,
                 input_point_count=len(points),
                 metadata={
-                    "backend": "openpcdet",
+                    "backend": "mmdet3d",
                     "config": str(self._config.config_path),
                     "checkpoint": str(self._config.checkpoint_path),
                     "stdout": payload.get("stdout", ""),
@@ -92,10 +95,6 @@ class OpenPCDetDetector:
             )
 
     def _validate(self) -> None:
-        if self._config.openpcdet_repo is None:
-            raise DetectorUnavailableError(
-                f"{self.name} requires --openpcdet-repo pointing to an OpenPCDet checkout."
-            )
         if self._config.config_path is None:
             raise DetectorUnavailableError(
                 f"{self.name} requires a model config path."
@@ -104,4 +103,3 @@ class OpenPCDetDetector:
             raise DetectorUnavailableError(
                 f"{self.name} requires a model checkpoint path."
             )
-
