@@ -16,10 +16,54 @@ from depthyn.source.converted_csv import (
 from depthyn.tracking.simple import SimpleTracker
 
 
-def run_replay(config: ReplayConfig) -> dict[str, object]:
+def _resolve_source_type(config: ReplayConfig) -> str:
+    """Determine source type from config or auto-detect from input directory."""
+    if config.source_type != "auto":
+        return config.source_type
+    input_dir = config.input_dir
+    if any(input_dir.glob("*.pcap")):
+        return "pcap"
+    return "csv"
+
+
+def _iter_frames(config: ReplayConfig) -> list:
+    """Return a list of frames from the configured source."""
+    source_type = _resolve_source_type(config)
+
+    if source_type == "pcap":
+        from depthyn.source.ouster_pcap import iter_ouster_pcap_frames
+
+        return list(
+            iter_ouster_pcap_frames(
+                config.input_dir,
+                voxel_size_m=config.voxel_size_m,
+                min_range_m=config.min_range_m,
+                max_range_m=config.max_range_m,
+                z_min_m=config.z_min_m,
+                z_max_m=config.z_max_m,
+                max_frames=config.max_frames,
+            )
+        )
+
+    # Default: CSV
     frame_paths = discover_converted_csv_frames(config.input_dir)
     if config.max_frames is not None:
         frame_paths = frame_paths[: config.max_frames]
+    return [
+        load_converted_csv_frame(
+            path,
+            voxel_size_m=config.voxel_size_m,
+            min_range_m=config.min_range_m,
+            max_range_m=config.max_range_m,
+            z_min_m=config.z_min_m,
+            z_max_m=config.z_max_m,
+        )
+        for path in frame_paths
+    ]
+
+
+def run_replay(config: ReplayConfig) -> dict[str, object]:
+    frames = _iter_frames(config)
 
     detector = create_detector(config)
     zones = (
@@ -55,15 +99,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     scene_min = [float("inf"), float("inf"), float("inf")]
     scene_max = [float("-inf"), float("-inf"), float("-inf")]
 
-    for frame_index, frame_path in enumerate(frame_paths):
-        frame = load_converted_csv_frame(
-            frame_path,
-            voxel_size_m=config.voxel_size_m,
-            min_range_m=config.min_range_m,
-            max_range_m=config.max_range_m,
-            z_min_m=config.z_min_m,
-            z_max_m=config.z_max_m,
-        )
+    for frame_index, frame in enumerate(frames):
         timestamp_ns_values.append(frame.timestamp_ns)
         total_points += len(frame.points)
         stage = "tracking"

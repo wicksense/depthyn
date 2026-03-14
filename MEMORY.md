@@ -266,7 +266,7 @@ Depthyn will be built in this order and tackled one stage at a time.
   - record model assumptions and known gaps in docs/memory
 
 ### Stage 3: Native Ouster Source Adapters
-- Status: planned
+- Status: done (pcap), osf and live UDP planned
 - Scope:
   - add Ouster-specific adapters under `src/depthyn/source/`
   - support raw `pcap`, `osf`, and later live UDP
@@ -274,6 +274,13 @@ Depthyn will be built in this order and tackled one stage at a time.
 - Exit criteria:
   - replay through a raw Ouster path without requiring converted CSV
   - no changes required in tracking/rules/viewer for source swaps
+- Completed:
+  - `src/depthyn/source/ouster_pcap.py` reads raw pcap via Ouster SDK
+  - auto-detects source type (csv vs pcap) from input directory
+  - `--source-type` CLI option for explicit override
+  - verified on `SampleData/26/` (OS-1-128, 9 pcap chunks)
+  - 13 new tests, 41 total tests passing
+  - no changes needed in tracking, rules, or viewer
 
 ### Stage 4: Live Sensor Runtime
 - Status: planned
@@ -345,8 +352,10 @@ Depthyn will be built in this order and tackled one stage at a time.
 ## Current Next Step
 - 3D viewer is complete
 - GPU ONNX inference is working (onnxruntime-gpu 1.23.2, CUDA 12, cuDNN 9)
-- Next priority: Stage 3 (Native Ouster Source Adapters) to get better data flowing
-- Then Stage 2 (Detector Evaluation) with better data + 3D viewer
+- Stage 3 pcap adapter is complete
+- ouster-sdk 0.16.1 + numpy installed in system Python (via --user --break-system-packages)
+- Next priority: Stage 2 (Detector Evaluation) with pcap data + 3D viewer
+- Then Stage 4 (Live Sensor Runtime)
 
 ## Current ML Environment
 - Env name: `depthyn-mmdet3d`
