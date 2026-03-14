@@ -41,6 +41,42 @@ The current baseline is deliberately simple:
 This is enough to validate ingest, scene state, summaries, and future UI/API
 contracts without blocking on ML training or model integration.
 
+## Detector Interface
+
+Replay now routes detections through a detector abstraction:
+- `baseline`: built-in clustering detector using foreground occupancy clusters
+- `pointpillars`: optional OpenPCDet-backed detector
+- `centerpoint`: optional OpenPCDet-backed detector
+
+The key design point is that tracking, replay summaries, and the viewer do not
+care which detector produced the boxes. That lets us compare a no-ML baseline
+against learned 3D detectors without changing the rest of the stack.
+
+## OpenPCDet Adapter
+
+The ML adapter is intentionally out-of-process:
+- Depthyn serializes the current frame to a temp JSON payload
+- an external Python executable in an OpenPCDet environment runs
+  `tools/openpcdet_runner.py`
+- the runner loads the model, performs inference, and writes normalized JSON
+  detections back to Depthyn
+
+Why use an out-of-process adapter:
+- the main Depthyn environment is currently dependency-light
+- PointPillars and CenterPoint need `torch`, `numpy`, and the OpenPCDet stack
+- it keeps the replay and viewer tooling usable even before the ML environment
+  is installed
+
+## Comparison Flow
+
+The `compare` command runs multiple detector backends over the same replay input
+and writes:
+- one replay summary per detector
+- one `comparison.json` report with status and key metrics
+
+If an optional ML backend is not configured, comparison records that backend as
+an error instead of aborting the whole run.
+
 ## Recorded Replay Viewer
 
 Depthyn now includes a lightweight browser viewer for replay bundles:
@@ -55,7 +91,7 @@ data now, before the larger API and operator UI arrive.
 
 ## Next Layers
 
-- learned 3D detection and classification
+- native ML environment bootstrap so PointPillars and CenterPoint can run locally
 - zone rules and alerts
 - replay timeline and event storage
 - REST/WebSocket API

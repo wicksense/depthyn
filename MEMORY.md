@@ -77,6 +77,21 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
   - replay bundle generated successfully for first 20 sample frames
   - `viewer/index.html` served successfully over local HTTP
   - `artifacts/sampledata-26-summary.json` served successfully over local HTTP
+- Added a detector abstraction layer:
+  - baseline clustering detector is now a first-class backend
+  - optional OpenPCDet-backed detector adapter added for `PointPillars` and `CenterPoint`
+  - `compare` command added for side-by-side detector runs
+- Added helper runner script: `tools/openpcdet_runner.py`
+- Current shell environment is still dependency-light:
+  - no `pip`
+  - no `numpy`
+  - no `torch`
+  - no `OpenPCDet`
+- ML detector execution therefore depends on a separate OpenPCDet-capable Python environment
+- Verified locally:
+  - `replay --detector baseline` runs successfully on sample data
+  - `compare --detectors baseline pointpillars` writes a comparison report
+  - unconfigured `pointpillars` currently reports a clean configuration error instead of aborting the run
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
@@ -94,15 +109,12 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 - Whether we should start with recorded pcap/osf data, live sensor streaming, or both.
 
 ## Naming Direction
-- Avoid generic descriptive repo names as the primary identity
-- Avoid names that imply multi-sensor fusion as a core day-one feature
-- Prefer a brandable coined name, with a clear descriptive subtitle in the README
-- `Trackora` was considered but is not final due to search/name conflicts
-- Current subtitle direction: `3D tracking and scene intelligence from LiDAR`
+- Project/repo name: `Depthyn`
+- Subtitle direction: `3D tracking and scene intelligence from LiDAR`
 
 ## Current Product Scope
-- Trackora should support both live sensor operation and recorded data replay
-- Trackora should support both stationary monitoring and moving/mobile LiDAR workflows
+- Depthyn should support both live sensor operation and recorded data replay
+- Depthyn should support both stationary monitoring and moving/mobile LiDAR workflows
 - Initial deployment target is one Ouster sensor
 - Multi-sensor fusion remains a later feature
 

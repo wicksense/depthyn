@@ -5,8 +5,8 @@ import statistics
 from pathlib import Path
 
 from depthyn.config import ReplayConfig
+from depthyn.detectors.factory import create_detector
 from depthyn.perception.background import BackgroundModel
-from depthyn.perception.clustering import cluster_points
 from depthyn.source.converted_csv import (
     discover_converted_csv_frames,
     load_converted_csv_frame,
@@ -19,12 +19,14 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     if config.max_frames is not None:
         frame_paths = frame_paths[: config.max_frames]
 
+    detector = create_detector(config)
     background_model = (
         BackgroundModel(
             cell_size_m=config.cluster_cell_size_m,
             min_hits=config.background_min_hits,
         )
         if config.mode == "stationary"
+        and detector.input_mode == "foreground"
         else None
     )
     tracker = SimpleTracker(
@@ -59,20 +61,18 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             background_model.observe(frame.points)
             working_points = []
             detections = []
+            detector_metadata = {"mode": "background_warmup"}
             active_tracks = tracker.update([], frame.timestamp_ns)
             stage = "background_warmup"
         else:
             if background_model is not None:
                 working_points = background_model.filter_foreground(frame.points)
-            detections = cluster_points(
-                working_points,
-                cell_size_m=config.cluster_cell_size_m,
-                min_cluster_points=config.min_cluster_points,
-                min_cluster_cells=config.min_cluster_cells,
-                min_cluster_height_m=config.min_cluster_height_m,
-                max_cluster_height_m=config.max_cluster_height_m,
-                max_cluster_width_m=config.max_cluster_width_m,
+            detector_points = (
+                working_points if detector.input_mode == "foreground" else frame.points
             )
+            detector_result = detector.detect(frame, detector_points)
+            detections = detector_result.detections
+            detector_metadata = detector_result.metadata
             active_tracks = tracker.update(detections, frame.timestamp_ns)
             total_detections += len(detections)
 
@@ -110,13 +110,18 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "preview_points": [list(point) for point in preview_points],
                 "detections": [detection.to_dict() for detection in detections],
                 "active_tracks": active_track_payload,
+                "detector_input_points": len(
+                    working_points if detector.input_mode == "foreground" else frame.points
+                ),
+                "detector_metadata": detector_metadata,
             }
         )
 
     tracks = tracker.all_tracks()
     summary: dict[str, object] = {
         "project": "Depthyn",
-        "pipeline": "baseline_replay",
+        "pipeline": "detector_replay",
+        "detector": config.detector.to_dict(),
         "config": config.to_dict(),
         "frames_processed": len(frame_summaries),
         "scene_bounds": _finalize_bounds(scene_min, scene_max),
@@ -131,6 +136,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             "total_detections": total_detections,
             "total_tracks": len(tracks),
             "max_active_tracks": max_active_tracks,
+            "detector_name": config.detector.kind,
         },
         "frame_summaries": frame_summaries,
         "track_summaries": [track.to_dict() for track in tracks],

@@ -17,6 +17,8 @@ the platform comes online.
 - support `mobile` and `stationary` processing modes
 - downsample and filter LiDAR frames
 - build a simple non-ML baseline using clustering + tracking
+- expose a pluggable detector interface for ML backends
+- compare the baseline against optional PointPillars or CenterPoint runs
 - write JSON replay bundles for downstream API/UI work
 - serve a browser replay viewer for recorded sessions
 
@@ -43,6 +45,53 @@ PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
 ```
 
 Then open the printed URL.
+
+## Detector Backends
+
+Depthyn now supports detector selection during replay:
+- `baseline`: built-in clustering detector
+- `pointpillars`: optional OpenPCDet adapter
+- `centerpoint`: optional OpenPCDet adapter
+
+Baseline replay:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli replay \
+  SampleData/output-26/converted_csv \
+  --output artifacts/baseline-summary.json \
+  --detector baseline \
+  --mode mobile \
+  --max-frames 20
+```
+
+Side-by-side comparison report:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli compare \
+  SampleData/output-26/converted_csv \
+  --output-dir artifacts/detector-comparison \
+  --detectors baseline pointpillars centerpoint \
+  --openpcdet-repo /path/to/OpenPCDet \
+  --openpcdet-python /path/to/openpcdet-env/bin/python \
+  --pointpillars-config /path/to/pointpillars.yaml \
+  --pointpillars-checkpoint /path/to/pointpillars.pth \
+  --centerpoint-config /path/to/centerpoint.yaml \
+  --centerpoint-checkpoint /path/to/centerpoint.pth
+```
+
+If the OpenPCDet environment is not configured yet, the comparison report will
+still run and mark the ML detectors as configuration errors instead of failing
+the whole command.
+
+## OpenPCDet Notes
+
+The PointPillars and CenterPoint adapters are designed around OpenPCDet. The
+current repo does not vendor or install OpenPCDet automatically. Instead,
+Depthyn shells out to `tools/openpcdet_runner.py` using the Python executable
+from an existing OpenPCDet-capable environment.
+
+That keeps the core project lightweight while still giving us a concrete path
+to compare the non-ML baseline against current 3D detectors.
 
 ## Why Start With A Non-ML Baseline?
 

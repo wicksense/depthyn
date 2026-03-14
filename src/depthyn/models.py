@@ -22,6 +22,10 @@ class Detection:
     bbox_max: Point3D
     point_count: int
     cell_count: int
+    label: str = "object"
+    score: float | None = None
+    source: str = "baseline"
+    heading_rad: float | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -31,6 +35,10 @@ class Detection:
             "bbox_max": list(self.bbox_max),
             "point_count": self.point_count,
             "cell_count": self.cell_count,
+            "label": self.label,
+            "score": None if self.score is None else round(self.score, 4),
+            "source": self.source,
+            "heading_rad": self.heading_rad,
         }
 
 
@@ -72,4 +80,3 @@ class Track:
             "age_frames": self.age_frames,
             "total_distance_m": round(self.total_distance_m, 3),
         }
-
