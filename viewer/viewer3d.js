@@ -1,0 +1,490 @@
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// ─── Color palette ───────────────────────────────────────────────
+
+const COLORS = {
+  car:        { hex: "#e8913a", r: 0.91, g: 0.57, b: 0.23 },
+  truck:      { hex: "#b07de8", r: 0.69, g: 0.49, b: 0.91 },
+  bus:        { hex: "#9d6fd4", r: 0.62, g: 0.44, b: 0.83 },
+  pedestrian: { hex: "#3dcc7a", r: 0.24, g: 0.80, b: 0.48 },
+  bicycle:    { hex: "#42a5d9", r: 0.26, g: 0.65, b: 0.85 },
+  object:     { hex: "#e8913a", r: 0.91, g: 0.57, b: 0.23 },
+  track:      { hex: "#3dcc7a", r: 0.24, g: 0.80, b: 0.48 },
+  grid:       { hex: "#1a1f2e", r: 0.10, g: 0.12, b: 0.18 },
+  ground:     { hex: "#0c0e13" },
+  point:      { hex: "#8b6fbf" },
+};
+
+function labelColor(label) {
+  return COLORS[(label || "object").toLowerCase()] || COLORS.object;
+}
+
+// ─── State ───────────────────────────────────────────────────────
+
+const state = {
+  bundle: null,
+  frameIndex: 0,
+  playing: false,
+  timer: null,
+};
+
+// ─── Three.js setup ──────────────────────────────────────────────
+
+const container = document.getElementById("canvas-container");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x0c0e13);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0c0e13, 0.008);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 500);
+camera.position.set(0, -45, 35);
+camera.up.set(0, 0, 1);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.maxPolarAngle = Math.PI * 0.48;
+controls.minDistance = 5;
+controls.maxDistance = 200;
+controls.target.set(0, 0, 0);
+
+// ─── Lights ──────────────────────────────────────────────────────
+
+scene.add(new THREE.AmbientLight(0x404860, 1.0));
+const dirLight = new THREE.DirectionalLight(0xc0c8e0, 0.4);
+dirLight.position.set(30, -20, 50);
+scene.add(dirLight);
+
+// ─── Ground grid ─────────────────────────────────────────────────
+
+function createGroundGrid() {
+  const gridGroup = new THREE.Group();
+
+  // Large grid
+  const grid = new THREE.GridHelper(200, 40, 0x1a2030, 0x141826);
+  grid.rotation.x = Math.PI / 2;
+  grid.position.z = -0.01;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.5;
+  gridGroup.add(grid);
+
+  // Origin axes
+  const axLen = 6;
+  const axMat = (color) => new THREE.LineBasicMaterial({ color, linewidth: 2, transparent: true, opacity: 0.6 });
+  const makeLine = (pts, color) => {
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    return new THREE.Line(g, axMat(color));
+  };
+  gridGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(axLen,0,0)], 0xff4444));
+  gridGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(0,axLen,0)], 0x44ff44));
+  gridGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,axLen)], 0x4488ff));
+
+  scene.add(gridGroup);
+}
+createGroundGrid();
+
+// ─── Scene objects (rebuilt per frame) ───────────────────────────
+
+let pointCloud = null;
+let boxGroup = new THREE.Group();
+let trailGroup = new THREE.Group();
+scene.add(boxGroup);
+scene.add(trailGroup);
+
+const labelContainer = document.createElement("div");
+labelContainer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden;";
+document.body.appendChild(labelContainer);
+
+// ─── Point cloud ─────────────────────────────────────────────────
+
+function buildPointCloud(points) {
+  if (pointCloud) {
+    scene.remove(pointCloud);
+    pointCloud.geometry.dispose();
+    pointCloud.material.dispose();
+  }
+  if (!points || !points.length) return;
+
+  const positions = new Float32Array(points.length * 3);
+  const colors = new Float32Array(points.length * 3);
+
+  // Color by height
+  let zMin = Infinity, zMax = -Infinity;
+  for (const p of points) {
+    if (p[2] < zMin) zMin = p[2];
+    if (p[2] > zMax) zMax = p[2];
+  }
+  const zSpan = Math.max(0.1, zMax - zMin);
+
+  for (let i = 0; i < points.length; i++) {
+    positions[i * 3]     = points[i][0];
+    positions[i * 3 + 1] = points[i][1];
+    positions[i * 3 + 2] = points[i][2];
+
+    const t = (points[i][2] - zMin) / zSpan;
+    // Gradient: deep blue -> purple -> warm pink -> orange at top
+    const r = 0.25 + t * 0.65;
+    const g = 0.15 + t * 0.20;
+    const b = 0.55 + (1 - t) * 0.25;
+    colors[i * 3]     = r;
+    colors[i * 3 + 1] = g;
+    colors[i * 3 + 2] = b;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+
+  const material = new THREE.PointsMaterial({
+    size: 1.8,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  });
+
+  pointCloud = new THREE.Points(geometry, material);
+  scene.add(pointCloud);
+}
+
+// ─── 3D bounding boxes ──────────────────────────────────────────
+
+function buildBoxes(detections) {
+  // Clear previous
+  boxGroup.clear();
+  labelContainer.innerHTML = "";
+
+  if (!detections || !detections.length) return;
+
+  for (const det of detections) {
+    const color = labelColor(det.label);
+    const threeColor = new THREE.Color(color.r, color.g, color.b);
+
+    const min = det.bbox_min;
+    const max = det.bbox_max;
+    const cx = (min[0] + max[0]) / 2;
+    const cy = (min[1] + max[1]) / 2;
+    const cz = (min[2] + max[2]) / 2;
+    const sx = Math.abs(max[0] - min[0]);
+    const sy = Math.abs(max[1] - min[1]);
+    const sz = Math.abs(max[2] - min[2]);
+
+    // Wireframe box
+    const boxGeo = new THREE.BoxGeometry(sx, sy, sz);
+    const edges = new THREE.EdgesGeometry(boxGeo);
+    const lineMat = new THREE.LineBasicMaterial({ color: threeColor, linewidth: 2, transparent: true, opacity: 0.9 });
+    const wireframe = new THREE.LineSegments(edges, lineMat);
+    wireframe.position.set(cx, cy, cz);
+    if (det.heading_rad != null) {
+      wireframe.rotation.z = det.heading_rad;
+    }
+    boxGroup.add(wireframe);
+
+    // Semi-transparent fill on bottom face
+    const fillGeo = new THREE.PlaneGeometry(sx, sy);
+    const fillMat = new THREE.MeshBasicMaterial({
+      color: threeColor,
+      transparent: true,
+      opacity: 0.08,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const fill = new THREE.Mesh(fillGeo, fillMat);
+    fill.position.set(cx, cy, min[2] + 0.01);
+    if (det.heading_rad != null) {
+      fill.rotation.z = det.heading_rad;
+    }
+    boxGroup.add(fill);
+
+    // Vertical line from ground to box bottom
+    const poleGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(cx, cy, -2.5),
+      new THREE.Vector3(cx, cy, min[2]),
+    ]);
+    const poleMat = new THREE.LineBasicMaterial({ color: threeColor, transparent: true, opacity: 0.2 });
+    boxGroup.add(new THREE.Line(poleGeo, poleMat));
+
+    // Store data for 3D label projection
+    wireframe.userData = {
+      label: det.label || "object",
+      score: det.score,
+      detId: det.detection_id,
+      color: color.hex,
+      topPos: new THREE.Vector3(cx, cy, max[2] + 0.5),
+    };
+  }
+}
+
+// ─── Track trails ───────────────────────────────────────────────
+
+function buildTrails(bundle, frameIndex) {
+  trailGroup.clear();
+  if (!bundle) return;
+
+  const history = new Map();
+  const start = Math.max(0, frameIndex - 30);
+  for (let i = start; i <= frameIndex; i++) {
+    const frame = bundle.frame_summaries[i];
+    for (const track of frame.active_tracks) {
+      if (!history.has(track.track_id)) history.set(track.track_id, []);
+      history.get(track.track_id).push(track.centroid);
+    }
+  }
+
+  for (const [, trail] of history) {
+    if (trail.length < 2) continue;
+    const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x3dcc7a,
+      transparent: true,
+      opacity: 0.35,
+      linewidth: 1,
+    });
+    trailGroup.add(new THREE.Line(geo, mat));
+  }
+}
+
+// ─── Project 3D labels to screen ─────────────────────────────────
+
+function updateLabels() {
+  labelContainer.innerHTML = "";
+  if (!state.bundle) return;
+
+  const halfW = window.innerWidth / 2;
+  const halfH = window.innerHeight / 2;
+
+  for (const child of boxGroup.children) {
+    if (!child.userData || !child.userData.topPos) continue;
+    const data = child.userData;
+
+    const projected = data.topPos.clone().project(camera);
+    if (projected.z > 1) continue; // behind camera
+
+    const x = projected.x * halfW + halfW;
+    const y = -projected.y * halfH + halfH;
+
+    if (x < -100 || x > window.innerWidth + 100 || y < -50 || y > window.innerHeight + 50) continue;
+
+    const el = document.createElement("div");
+    el.className = "label-3d";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.style.color = data.color;
+    el.style.background = "rgba(12, 14, 19, 0.75)";
+    el.style.borderLeft = `3px solid ${data.color}`;
+
+    const scoreText = data.score != null ? ` ${Math.round(data.score * 100)}%` : "";
+    el.textContent = data.label + scoreText;
+    labelContainer.appendChild(el);
+  }
+}
+
+// ─── Sidebar panels ─────────────────────────────────────────────
+
+function updateSidebar() {
+  const statsEl = document.getElementById("scene-stats");
+  const objectsEl = document.getElementById("object-list");
+  const statusEl = document.getElementById("status-label");
+
+  const bundle = state.bundle;
+  const frame = bundle ? bundle.frame_summaries[state.frameIndex] : null;
+
+  if (!bundle || !frame) {
+    statsEl.innerHTML = "";
+    objectsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Open a replay JSON to begin.</div>';
+    return;
+  }
+
+  statusEl.textContent = `${bundle.frames_processed} frames \u00b7 ${bundle.metrics.detector_name || "baseline"}`;
+
+  const rows = [
+    ["Frame", `${state.frameIndex + 1} / ${bundle.frame_summaries.length}`],
+    ["Points", frame.points_after_filtering],
+    ["Detections", frame.detection_count],
+    ["Tracks", frame.active_tracks.length],
+    ["Mode", bundle.config.mode],
+  ];
+  statsEl.innerHTML = rows.map(([k, v]) =>
+    `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
+  ).join("");
+
+  // Object cards: show detections + tracks combined
+  const items = [];
+  for (const det of frame.detections) {
+    items.push({ type: "det", label: det.label, score: det.score, id: det.detection_id, color: labelColor(det.label).hex });
+  }
+  for (const track of frame.active_tracks) {
+    const alreadyListed = items.some(it => it.type === "det");
+    items.push({
+      type: "track",
+      label: `Track #${track.track_id}`,
+      score: null,
+      id: `track-${track.track_id}`,
+      color: COLORS.track.hex,
+      meta: `${track.hits} hits \u00b7 ${track.total_distance_m.toFixed(1)}m`,
+    });
+  }
+
+  if (items.length === 0) {
+    objectsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No objects in this frame.</div>';
+  } else {
+    objectsEl.innerHTML = items.map(it => {
+      const scoreText = it.score != null ? `${Math.round(it.score * 100)}%` : (it.meta || "");
+      return `<div class="obj-card">
+        <div class="obj-dot" style="background:${it.color}"></div>
+        <span class="obj-label">${it.label}</span>
+        <span class="obj-meta">${scoreText}</span>
+      </div>`;
+    }).join("");
+  }
+}
+
+function buildLegend() {
+  const el = document.getElementById("legend-list");
+  const items = [
+    ["Point cloud", "#8b6fbf"],
+    ["Car", COLORS.car.hex],
+    ["Truck", COLORS.truck.hex],
+    ["Pedestrian", COLORS.pedestrian.hex],
+    ["Bicycle", COLORS.bicycle.hex],
+    ["Track trail", COLORS.track.hex],
+  ];
+  el.innerHTML = items.map(([label, color]) =>
+    `<li><span class="legend-swatch" style="background:${color}"></span>${label}</li>`
+  ).join("");
+}
+buildLegend();
+
+// ─── Frame management ───────────────────────────────────────────
+
+function setBundle(bundle) {
+  state.bundle = bundle;
+  state.frameIndex = 0;
+  stopPlayback();
+
+  const slider = document.getElementById("frame-slider");
+  slider.min = 0;
+  slider.max = Math.max(0, bundle.frame_summaries.length - 1);
+  slider.value = 0;
+
+  // Center camera on scene
+  const b = bundle.scene_bounds;
+  const cx = (b.min[0] + b.max[0]) / 2;
+  const cy = (b.min[1] + b.max[1]) / 2;
+  controls.target.set(cx, cy, 0);
+  camera.position.set(cx, cy - 50, 40);
+
+  showFrame();
+}
+
+function showFrame() {
+  if (!state.bundle) return;
+  const frame = state.bundle.frame_summaries[state.frameIndex];
+
+  buildPointCloud(frame.preview_points);
+  buildBoxes(frame.detections);
+  buildTrails(state.bundle, state.frameIndex);
+  updateSidebar();
+
+  document.getElementById("frame-counter").textContent =
+    `${state.frameIndex + 1} / ${state.bundle.frame_summaries.length}`;
+  document.getElementById("frame-slider").value = state.frameIndex;
+}
+
+function setFrameIndex(idx) {
+  if (!state.bundle) return;
+  state.frameIndex = Math.max(0, Math.min(state.bundle.frame_summaries.length - 1, idx));
+  showFrame();
+}
+
+// ─── Playback ───────────────────────────────────────────────────
+
+function startPlayback() {
+  if (!state.bundle || state.playing) return;
+  const baseInterval = state.bundle.playback.median_frame_interval_ms || 100;
+  const speed = Number(document.getElementById("speed-select").value) || 1;
+  const interval = Math.max(20, baseInterval / speed);
+  state.playing = true;
+  document.getElementById("btn-play").textContent = "Pause";
+  state.timer = setInterval(() => {
+    if (state.frameIndex >= state.bundle.frame_summaries.length - 1) {
+      stopPlayback();
+      return;
+    }
+    setFrameIndex(state.frameIndex + 1);
+  }, interval);
+}
+
+function stopPlayback() {
+  if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  state.playing = false;
+  document.getElementById("btn-play").textContent = "Play";
+}
+
+// ─── Event binding ──────────────────────────────────────────────
+
+document.getElementById("btn-play").addEventListener("click", () => {
+  state.playing ? stopPlayback() : startPlayback();
+});
+document.getElementById("btn-prev").addEventListener("click", () => setFrameIndex(state.frameIndex - 1));
+document.getElementById("btn-next").addEventListener("click", () => setFrameIndex(state.frameIndex + 1));
+document.getElementById("frame-slider").addEventListener("input", (e) => setFrameIndex(Number(e.target.value)));
+document.getElementById("speed-select").addEventListener("change", () => {
+  if (state.playing) { stopPlayback(); startPlayback(); }
+});
+
+document.getElementById("file-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  setBundle(JSON.parse(text));
+});
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === " ") { e.preventDefault(); state.playing ? stopPlayback() : startPlayback(); }
+  if (e.key === "ArrowLeft") setFrameIndex(state.frameIndex - 1);
+  if (e.key === "ArrowRight") setFrameIndex(state.frameIndex + 1);
+});
+
+// ─── Bootstrap ──────────────────────────────────────────────────
+
+async function bootstrap() {
+  const params = new URLSearchParams(window.location.search);
+  const dataUrl = params.get("data");
+  if (dataUrl) {
+    try {
+      const res = await fetch(dataUrl);
+      const bundle = await res.json();
+      setBundle(bundle);
+    } catch (err) {
+      document.getElementById("status-label").textContent = `Load error: ${err.message}`;
+    }
+  }
+}
+
+// ─── Render loop ─────────────────────────────────────────────────
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  updateLabels();
+}
+
+bootstrap();
+animate();
