@@ -149,9 +149,8 @@ function drawPoints(project, points) {
 }
 
 function drawDetections(project, detections) {
-  ctx.strokeStyle = "rgba(201, 91, 43, 0.92)";
-  ctx.fillStyle = "rgba(239, 180, 107, 0.14)";
   ctx.lineWidth = 2;
+  ctx.font = "11px IBM Plex Sans";
   for (const detection of detections) {
     const [x1, y1] = project(detection.bbox_min);
     const [x2, y2] = project(detection.bbox_max);
@@ -159,9 +158,34 @@ function drawDetections(project, detections) {
     const top = Math.min(y1, y2);
     const width = Math.max(8, Math.abs(x2 - x1));
     const height = Math.max(8, Math.abs(y2 - y1));
+
+    const color = labelColor(detection.label);
+    ctx.fillStyle = color.fill;
+    ctx.strokeStyle = color.stroke;
     ctx.fillRect(left, top, width, height);
     ctx.strokeRect(left, top, width, height);
+
+    const label = detection.label || "";
+    const score = detection.score != null ? ` ${Math.round(detection.score * 100)}%` : "";
+    const tag = label + score;
+    if (tag) {
+      ctx.fillStyle = "rgba(18, 18, 18, 0.82)";
+      const textWidth = ctx.measureText(tag).width;
+      ctx.fillRect(left, top - 15, textWidth + 6, 14);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(tag, left + 3, top - 4);
+    }
   }
+}
+
+function labelColor(label) {
+  const lc = (label || "").toLowerCase();
+  if (lc === "car") return { fill: "rgba(239, 180, 107, 0.18)", stroke: "rgba(201, 91, 43, 0.92)" };
+  if (lc === "truck") return { fill: "rgba(180, 140, 220, 0.18)", stroke: "rgba(120, 70, 180, 0.92)" };
+  if (lc === "bus") return { fill: "rgba(180, 140, 220, 0.18)", stroke: "rgba(120, 70, 180, 0.92)" };
+  if (lc === "pedestrian") return { fill: "rgba(100, 200, 150, 0.18)", stroke: "rgba(30, 140, 80, 0.92)" };
+  if (lc === "bicycle") return { fill: "rgba(100, 180, 230, 0.18)", stroke: "rgba(30, 100, 180, 0.92)" };
+  return { fill: "rgba(239, 180, 107, 0.14)", stroke: "rgba(201, 91, 43, 0.92)" };
 }
 
 function drawTracks(project, tracks) {

@@ -105,6 +105,70 @@ def _load_xyzi_bin(path, np):
     return point_cloud.reshape(-1, 4)
 
 
+def _ensure_model_feature_count(point_cloud, np):
+    if point_cloud is None:
+        return None
+    if point_cloud.ndim != 2:
+        raise ValueError("Expected point cloud array with shape [N, C].")
+    if point_cloud.shape[1] == 5:
+        return point_cloud
+    if point_cloud.shape[1] == 4:
+        zeros = np.zeros((point_cloud.shape[0], 1), dtype=np.float32)
+        return np.concatenate([point_cloud, zeros], axis=1)
+    raise ValueError(
+        f"Expected point cloud with 4 or 5 features, received shape {point_cloud.shape}"
+    )
+
+
+def _patch_test_pipeline_node(node, load_dim: int, use_dim: int):
+    if isinstance(node, dict):
+        node_type = node.get("type")
+        if node_type == "LoadPointsFromFile":
+            node["load_dim"] = load_dim
+            node["use_dim"] = list(range(use_dim))
+        transforms = node.get("transforms")
+        if isinstance(transforms, list):
+            _patch_test_pipeline_list(transforms, load_dim, use_dim)
+    elif isinstance(node, list):
+        _patch_test_pipeline_list(node, load_dim, use_dim)
+
+
+def _patch_test_pipeline_list(transforms, load_dim: int, use_dim: int):
+    filtered = []
+    for transform in transforms:
+        if isinstance(transform, dict) and transform.get("type") == "LoadPointsFromMultiSweeps":
+            continue
+        _patch_test_pipeline_node(transform, load_dim, use_dim)
+        filtered.append(transform)
+    transforms[:] = filtered
+
+
+def _patch_config_for_depthyn(config, load_dim: int, use_dim: int):
+    # Depthyn replay exports a single frame, so nuScenes-style multi-sweep
+    # loaders need to be removed and the point feature count patched.
+    for attr in ("test_pipeline", "eval_pipeline"):
+        pipeline = config.get(attr)
+        if isinstance(pipeline, list):
+            _patch_test_pipeline_list(pipeline, load_dim, use_dim)
+
+    test_dataloader = config.get("test_dataloader")
+    if isinstance(test_dataloader, dict):
+        dataset = test_dataloader.get("dataset")
+        if isinstance(dataset, dict):
+            pipeline = dataset.get("pipeline")
+            if isinstance(pipeline, list):
+                _patch_test_pipeline_list(pipeline, load_dim, use_dim)
+
+
+def _init_depthyn_model(config_path: Path, checkpoint_path: Path, device: str, load_dim: int, use_dim: int):
+    from mmengine.config import Config
+    from mmdet3d.apis import init_model
+
+    config = Config.fromfile(str(config_path))
+    _patch_config_for_depthyn(config, load_dim=load_dim, use_dim=use_dim)
+    return init_model(config, str(checkpoint_path), device=device)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mmdet3d-repo", type=Path, default=None)
@@ -126,14 +190,12 @@ def main(argv: list[str] | None = None) -> int:
 
     import numpy as np
 
-    from mmdet3d.apis import inference_detector, init_model
-
-    model = init_model(str(args.config), str(args.checkpoint), device=args.device)
-    class_names = _resolve_class_names(model)
+    from mmdet3d.apis import inference_detector
 
     if args.input_json is not None:
         payload = json.loads(args.input_json.read_text(encoding="utf-8"))
         point_cloud = _load_single_frame_cloud(payload, np)
+        point_cloud = _ensure_model_feature_count(point_cloud, np)
 
         if point_cloud is None:
             args.output_json.write_text(
@@ -151,6 +213,14 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="depthyn-mmdet3d-") as temp_dir:
             point_path = Path(temp_dir) / "frame.bin"
             point_cloud.tofile(point_path)
+            model = _init_depthyn_model(
+                args.config,
+                args.checkpoint,
+                device=args.device,
+                load_dim=point_cloud.shape[1],
+                use_dim=point_cloud.shape[1],
+            )
+            class_names = _resolve_class_names(model)
             result = inference_detector(model, str(point_path))
 
         detections = _normalize_result(
@@ -187,7 +257,20 @@ def main(argv: list[str] | None = None) -> int:
         if point_cloud is None:
             detections = []
         else:
-            result = inference_detector(model, str(point_path))
+            point_cloud = _ensure_model_feature_count(point_cloud, np)
+            with tempfile.TemporaryDirectory(prefix="depthyn-mmdet3d-frame-") as temp_dir:
+                temp_point_path = Path(temp_dir) / f"{frame_id}.bin"
+                point_cloud.tofile(temp_point_path)
+                if "model" not in locals():
+                    model = _init_depthyn_model(
+                        args.config,
+                        args.checkpoint,
+                        device=args.device,
+                        load_dim=point_cloud.shape[1],
+                        use_dim=point_cloud.shape[1],
+                    )
+                    class_names = _resolve_class_names(model)
+                result = inference_detector(model, str(temp_point_path))
             detections = _normalize_result(
                 result,
                 args.model_name,

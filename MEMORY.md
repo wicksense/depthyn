@@ -139,22 +139,32 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
   - all 15 unit tests pass
   - Python compilation passes for `src`, `tests`, and `tools`
   - orchestration logic is tested with mocked MMDetection3D execution
-- Not yet verified locally for Stage 1b model execution:
-  - real `CenterPoint` inference has not run in this shell yet because the required external MMDetection3D environment is still not available here
-- Current checked blockers for real Stage 1b execution:
-  - `.miniforge3/envs/depthyn-mmdet3d` exists
-  - `.mmdet3d` repo checkout exists
-  - a valid local CenterPoint config exists
-  - no local CenterPoint checkpoint file was found
-  - the env currently fails real MMDetection3D use because `mmcv` is missing
-  - `mmdet` and `mmdet3d` imports fail as a consequence
-  - `torch` import works, but the env shows a NumPy 2.x compatibility warning that likely needs `numpy<2`
+- Stage 1b ONNX CenterPoint backend is now complete:
+  - pivoted from MMDetection3D checkpoint downloads (blocked by network) to ONNX inference
+  - using Autoware CenterPoint v2 ONNX models (Apache-2.0, from TIER IV)
+  - models downloaded from `awf.ml.dev.web.auto` (not blocked)
+  - new detector backend: `src/depthyn/detectors/onnx_centerpoint.py`
+  - in-process inference via `onnxruntime` (no subprocess, no mmdet3d dependency)
+  - voxelization, feature generation, box decoding, and circle NMS all in numpy
+  - 5 classes: car, truck, bus, bicycle, pedestrian
+  - model files stored in `models/centerpoint-onnx/`
+  - download script: `tools/download_models.py`
+  - viewer updated to show detection labels, scores, and per-class color coding
+  - 27 tests pass (9 new ONNX tests + 18 existing)
+- First real ML inference verified locally on 2026-03-14:
+  - `replay --detector centerpoint-onnx` on `SampleData/output-26` (10 frames):
+    - 9 detections (8 car, 1 pedestrian)
+    - avg score: 0.4345
+    - 2 tracks
+  - `compare --detectors baseline centerpoint-onnx` runs successfully
+  - currently running on CPU (onnxruntime-gpu 1.23 needs CUDA 12 + cuDNN 9, env has CUDA 11.8)
+  - GPU acceleration is a follow-up optimization, not a blocker
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
 - Depthyn is no longer being framed around any one ML framework
-- Current optional detector adapter path: `MMDetection3D`
-- Practical baseline detector: `CenterPoint`
+- Primary inference path: ONNX CenterPoint (Autoware v2, in-process, no framework dependency)
+- MMDetection3D remains available for training/fine-tuning, not needed for inference
 - Modern detector candidate: `DSVT`
 - Optional speed/reference detector: `PointPillars`
 - Tracking candidate: lightweight 3D Kalman/Hungarian tracker or CenterPoint tracking-style association
@@ -169,13 +179,20 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 - User wants to avoid burning Codex limits on repeated heavy installs and is willing to run install commands directly when needed
 - Repo has moved away from OpenPCDet
 - Local cleanup removed the temporary `.openpcdet` checkout and Miniforge installer script
+- `download.openmmlab.com` is permanently blocked on this network
+  - MMDetection3D checkpoint downloads are not possible
+  - `mim install mmcv` also does not work
+  - mmcv was built from local source as a workaround
+- Pivoted to ONNX inference to bypass the OpenMMLab download dependency entirely
+  - Autoware CenterPoint ONNX models downloadable from `awf.ml.dev.web.auto` (not blocked)
+  - HuggingFace also reachable as an alternative model source
 - Repo architecture is now platform-first:
   - source adapters
   - scene pipeline
   - tracking
   - rules
   - replay/API/UI
-- MMDetection3D remains an optional backend path, not the foundation of the repo
+- MMDetection3D remains available for training/fine-tuning but is no longer needed for inference
 
 ## Open Questions
 - Which Gemini features should be in MVP vs later phases?
@@ -225,7 +242,7 @@ Depthyn will be built in this order and tackled one stage at a time.
   - keep tests passing
 
 ### Stage 1: ML Detection On Recorded Replay
-- Status: in progress
+- Status: done
 - Scope:
   - add the first real learned detector behind the existing detector interface
   - run it on recorded replay before touching live ingest
@@ -308,21 +325,12 @@ Depthyn will be built in this order and tackled one stage at a time.
   - multiple sensors can feed one shared scene without rewriting single-sensor logic
 
 ## Current Next Step
-- Execute Stage 1 first:
-  - Stage 1a is in place
-  - Stage 1b orchestration is in place
-  - Stage 1b environment repair is now complete:
-    - rebuilt `depthyn-mmdet3d` from scratch
-    - installed `torch 2.0.1+cu118` and verified GPU visibility
-    - built `mmcv 2.0.0` from source locally
-    - installed `mmdet 3.2.0`
-    - installed local `mmdet3d 1.4.0`
-    - verified imports for `torch`, `mmengine`, `mmcv`, `mmdet`, and `mmdet3d`
-  - next is the first real model run:
-    - obtain a matching CenterPoint checkpoint
-    - run `compare-mmdet3d-replay` on recorded replay
-    - compare CenterPoint against the baseline
-  - keep source ingestion work for the following stage unless model execution blocks progress
+- Stage 1 is complete -- first real ML detector runs on recorded replay
+- Next: Stage 2 (Detector Evaluation And Tuning)
+  - evaluate CenterPoint ONNX quality on more sample data
+  - compare detection quality vs baseline clustering
+  - decide if model is good enough or needs fine-tuning on Ouster data
+  - optionally enable GPU acceleration for ONNX (needs CUDA 12 / cuDNN 9 or onnxruntime 1.16 for CUDA 11.8)
 
 ## Current ML Environment
 - Env name: `depthyn-mmdet3d`

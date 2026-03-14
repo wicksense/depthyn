@@ -153,6 +153,17 @@ def _build_compare_detector_config(name: str, args: argparse.Namespace) -> Detec
             args.ml_score_threshold,
             args.ml_device,
         )
+    if name == "centerpoint-onnx":
+        return _build_detector_config(
+            name,
+            None,
+            None,
+            None,
+            None,
+            None,
+            args.ml_score_threshold,
+            args.ml_device,
+        )
     if name == "precomputed":
         return _build_detector_config(
             name,
@@ -227,7 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_parser.add_argument(
         "--detector",
-        choices=("baseline", "precomputed", "pointpillars", "centerpoint", "dsvt"),
+        choices=("baseline", "precomputed", "centerpoint-onnx", "pointpillars", "centerpoint", "dsvt"),
         default="baseline",
         help="Detection backend to run during replay.",
     )
@@ -282,7 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--detectors",
         nargs="+",
         default=["baseline"],
-        choices=("baseline", "precomputed", "pointpillars", "centerpoint", "dsvt"),
+        choices=("baseline", "precomputed", "centerpoint-onnx", "pointpillars", "centerpoint", "dsvt"),
         help="Detector backends to run side by side.",
     )
     compare_parser.add_argument(

@@ -11,3 +11,5 @@ SampleData/
 .mmcv/
 .ml-venv-test/
 checkpoints/
+models/*.onnx
+models/**/*.onnx

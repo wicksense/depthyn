@@ -215,6 +215,9 @@ designed so that tracking, zones, replay, and UI are not coupled to any single
 detector framework.
 
 Manual ML backend setup lives in [docs/mmdet3d_setup.md](/home/spriteadmin/Documents/LiDAR-Object-Detection/docs/mmdet3d_setup.md).
+That setup path was verified on this VM and includes the source-build details
+for `mmcv`, CUDA 11.8 toolkit layout, and compiler pinning that were needed to
+make the env reproducible here.
 
 ## Repository Layout
 
