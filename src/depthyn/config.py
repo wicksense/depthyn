@@ -10,6 +10,7 @@ class DetectorConfig:
     label: str | None = None
     backend_python: str | None = None
     backend_repo: Path | None = None
+    prediction_path: Path | None = None
     config_path: Path | None = None
     checkpoint_path: Path | None = None
     score_threshold: float = 0.25
@@ -22,6 +23,8 @@ class DetectorConfig:
         payload = asdict(self)
         if self.backend_repo is not None:
             payload["backend_repo"] = str(self.backend_repo)
+        if self.prediction_path is not None:
+            payload["prediction_path"] = str(self.prediction_path)
         if self.config_path is not None:
             payload["config_path"] = str(self.config_path)
         if self.checkpoint_path is not None:

@@ -113,6 +113,24 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
     - total tracks: `25`
     - max active tracks: `25`
     - total zone events: `0`
+- Started Stage 1 ML replay work with a framework-agnostic path instead of forcing one model stack into the main environment
+- Added `prepare-ml-replay` command:
+  - exports filtered replay frames as `XYZI` float32 little-endian binaries
+  - writes `manifest.json` for external model runners
+- Added `precomputed` detector backend:
+  - imports normalized detections from either per-frame JSON files or a single JSON mapping
+  - allows external ML outputs to flow through Depthyn tracking, rules, replay, comparison, and viewer
+- Replay metrics now include:
+  - `label_counts`
+  - `avg_detection_score`
+- Verified locally for Stage 1:
+  - all 13 unit tests pass
+  - `prepare-ml-replay` succeeds on `SampleData/output-26/converted_csv`
+  - `replay --detector precomputed` succeeds on sample data using normalized imported predictions
+  - `compare --detectors baseline precomputed` succeeds on sample data
+- Stage 1 is now split into two practical substeps:
+  - Stage 1a: ML replay prep/import loop and comparison plumbing
+  - Stage 1b: first real learned detector host and model execution
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
@@ -166,3 +184,111 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 - Build rules on top of tracks and scene state rather than coupling them to a detector framework
 - Add learned 3D detection/classification once replay and scene-state plumbing is stable
 - Zones, alerts, counts, replay, and analytics are built on top of tracked objects and scene state
+
+## Agreed Development Pipeline
+
+Depthyn will be built in this order and tackled one stage at a time.
+
+### Stage 0: Foundation Replay Stack
+- Status: done
+- Scope:
+  - converted CSV replay
+  - baseline clustering detector
+  - tracking
+  - replay viewer
+  - scene-state contract
+  - first zone-rule engine
+- Exit criteria:
+  - replay sample data locally
+  - inspect tracks and zones in browser
+  - keep tests passing
+
+### Stage 1: ML Detection On Recorded Replay
+- Status: in progress
+- Scope:
+  - add the first real learned detector behind the existing detector interface
+  - run it on recorded replay before touching live ingest
+  - compare `baseline` vs ML on `SampleData/output-26`
+- Preferred first model:
+  - `CenterPoint`
+- Exit criteria:
+  - one real ML backend runs on replayed sample data
+  - `compare` writes usable baseline-vs-ML outputs
+  - viewer can inspect ML-generated replay bundles
+  - imported detections and native model-hosted detections share the same normalized contract
+
+### Stage 2: Detector Evaluation And Tuning
+- Status: planned
+- Scope:
+  - compare baseline and ML behavior on sample recordings
+  - document failure modes, class quality, and track stability
+  - decide whether `CenterPoint` is good enough or whether to try another backend/model
+- Exit criteria:
+  - choose the first supported ML detector path for Depthyn
+  - record model assumptions and known gaps in docs/memory
+
+### Stage 3: Native Ouster Source Adapters
+- Status: planned
+- Scope:
+  - add Ouster-specific adapters under `src/depthyn/source/`
+  - support raw `pcap`, `osf`, and later live UDP
+  - keep the rest of Depthyn behind the shared frame contract
+- Exit criteria:
+  - replay through a raw Ouster path without requiring converted CSV
+  - no changes required in tracking/rules/viewer for source swaps
+
+### Stage 4: Live Sensor Runtime
+- Status: planned
+- Scope:
+  - live ingest from one Ouster sensor
+  - frame buffering and runtime processing loop
+  - reuse the same scene/detector/tracking/rules path as replay
+- Exit criteria:
+  - one live sensor can feed the runtime continuously
+  - scene-state output updates in near real time
+
+### Stage 5: Scene Intelligence Expansion
+- Status: planned
+- Scope:
+  - tripwires
+  - counts
+  - dwell analytics
+  - alert rules
+  - event summaries/bookmarks
+- Exit criteria:
+  - rules produce stable event outputs suitable for UI/API consumers
+
+### Stage 6: API And Operator UI
+- Status: planned
+- Scope:
+  - REST/WebSocket service
+  - richer replay controls
+  - better operator view for tracks, zones, and events
+  - eventual 3D scene view alongside the current 2D replay
+- Exit criteria:
+  - one service process can publish replay/live scene state to a browser client
+
+### Stage 7: Tracking And Product Hardening
+- Status: planned
+- Scope:
+  - improve tracker quality and smoothing
+  - improve class-aware tracks once ML detection is stable
+  - add health/status, better artifacts, and deployment docs
+- Exit criteria:
+  - repeatable local runs
+  - clearer product behavior and better debugging surfaces
+
+### Stage 8: Multi-Sensor Fusion
+- Status: later
+- Scope:
+  - only after single-sensor product loop is solid
+  - calibration, overlap handling, deduplication, and track handoff
+- Exit criteria:
+  - multiple sensors can feed one shared scene without rewriting single-sensor logic
+
+## Current Next Step
+- Execute Stage 1 first:
+  - Stage 1a is now in place
+  - next is Stage 1b: hook up the first true learned detector run on recorded replay
+  - compare it against the baseline using the existing export/import path or a direct backend
+  - keep source ingestion work for the following stage unless ML setup blocks progress

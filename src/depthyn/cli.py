@@ -6,6 +6,7 @@ from pathlib import Path
 
 from depthyn.comparison import run_detector_comparison
 from depthyn.config import DetectorConfig, ReplayConfig
+from depthyn.ml_prep import export_ml_replay_bundle
 from depthyn.pipeline import run_replay, write_summary
 from depthyn.viewer import serve_viewer
 
@@ -51,6 +52,7 @@ def _build_detector_config(
     kind: str,
     backend_python: str | None,
     backend_repo: Path | None,
+    prediction_path: Path | None,
     config_path: Path | None,
     checkpoint_path: Path | None,
     score_threshold: float,
@@ -60,6 +62,7 @@ def _build_detector_config(
         kind=kind,
         backend_python=backend_python,
         backend_repo=backend_repo,
+        prediction_path=prediction_path,
         config_path=config_path,
         checkpoint_path=checkpoint_path,
         score_threshold=score_threshold,
@@ -73,6 +76,7 @@ def _build_compare_detector_config(name: str, args: argparse.Namespace) -> Detec
             name,
             args.mmdet3d_python,
             args.mmdet3d_repo,
+            None,
             args.pointpillars_config,
             args.pointpillars_checkpoint,
             args.ml_score_threshold,
@@ -83,6 +87,7 @@ def _build_compare_detector_config(name: str, args: argparse.Namespace) -> Detec
             name,
             args.mmdet3d_python,
             args.mmdet3d_repo,
+            None,
             args.centerpoint_config,
             args.centerpoint_checkpoint,
             args.ml_score_threshold,
@@ -93,8 +98,20 @@ def _build_compare_detector_config(name: str, args: argparse.Namespace) -> Detec
             name,
             args.mmdet3d_python,
             args.mmdet3d_repo,
+            None,
             args.dsvt_config,
             args.dsvt_checkpoint,
+            args.ml_score_threshold,
+            args.ml_device,
+        )
+    if name == "precomputed":
+        return _build_detector_config(
+            name,
+            None,
+            None,
+            args.precomputed_path,
+            None,
+            None,
             args.ml_score_threshold,
             args.ml_device,
         )
@@ -102,6 +119,7 @@ def _build_compare_detector_config(name: str, args: argparse.Namespace) -> Detec
         name,
         args.mmdet3d_python,
         args.mmdet3d_repo,
+        None,
         None,
         None,
         args.ml_score_threshold,
@@ -160,7 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_parser.add_argument(
         "--detector",
-        choices=("baseline", "pointpillars", "centerpoint", "dsvt"),
+        choices=("baseline", "precomputed", "pointpillars", "centerpoint", "dsvt"),
         default="baseline",
         help="Detection backend to run during replay.",
     )
@@ -175,6 +193,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional JSON file defining XY zones for scene-rule evaluation.",
+    )
+    replay_parser.add_argument(
+        "--precomputed-path",
+        type=Path,
+        default=None,
+        help="Directory or JSON file containing normalized precomputed detections.",
     )
     _add_mmdet3d_options(replay_parser)
 
@@ -209,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--detectors",
         nargs="+",
         default=["baseline"],
-        choices=("baseline", "pointpillars", "centerpoint", "dsvt"),
+        choices=("baseline", "precomputed", "pointpillars", "centerpoint", "dsvt"),
         help="Detector backends to run side by side.",
     )
     compare_parser.add_argument(
@@ -241,6 +265,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional JSON file defining XY zones for scene-rule evaluation.",
+    )
+    compare_parser.add_argument(
+        "--precomputed-path",
+        type=Path,
+        default=None,
+        help="Directory or JSON file containing normalized precomputed detections.",
     )
     compare_parser.add_argument(
         "--pointpillars-config",
@@ -301,6 +331,64 @@ def build_parser() -> argparse.ArgumentParser:
         default=8765,
         help="Port for the local HTTP server.",
     )
+
+    export_parser = subparsers.add_parser(
+        "prepare-ml-replay",
+        help="Export filtered replay frames as ML-ready XYZI binaries plus a manifest.",
+    )
+    export_parser.add_argument(
+        "input_dir",
+        type=Path,
+        help="Directory containing converted frame CSV files.",
+    )
+    export_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("artifacts/ml-replay"),
+        help="Directory where the exported manifest and frame binaries are written.",
+    )
+    export_parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Optional cap on frames exported.",
+    )
+    export_parser.add_argument(
+        "--voxel-size",
+        type=float,
+        default=0.3,
+        help="Voxel size in meters for downsampling while loading frames.",
+    )
+    export_parser.add_argument(
+        "--min-range",
+        type=float,
+        default=1.0,
+        help="Minimum range in meters for exported points.",
+    )
+    export_parser.add_argument(
+        "--max-range",
+        type=float,
+        default=60.0,
+        help="Maximum range in meters for exported points.",
+    )
+    export_parser.add_argument(
+        "--z-min",
+        type=float,
+        default=-2.5,
+        help="Minimum Z in meters for exported points.",
+    )
+    export_parser.add_argument(
+        "--z-max",
+        type=float,
+        default=4.5,
+        help="Maximum Z in meters for exported points.",
+    )
+    export_parser.add_argument(
+        "--default-intensity",
+        type=float,
+        default=0.0,
+        help="Intensity value written into exported XYZI frames.",
+    )
     return parser
 
 
@@ -320,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.detector,
                 args.mmdet3d_python,
                 args.mmdet3d_repo,
+                args.precomputed_path,
                 args.ml_config,
                 args.ml_checkpoint,
                 args.ml_score_threshold,
@@ -355,6 +444,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve-viewer":
         serve_viewer(args.summary, args.host, args.port)
+        return 0
+    if args.command == "prepare-ml-replay":
+        manifest = export_ml_replay_bundle(
+            input_dir=args.input_dir,
+            output_dir=args.output_dir,
+            max_frames=args.max_frames,
+            voxel_size_m=args.voxel_size,
+            min_range_m=args.min_range,
+            max_range_m=args.max_range,
+            z_min_m=args.z_min,
+            z_max_m=args.z_max,
+            default_intensity=args.default_intensity,
+        )
+        print(f"Wrote ML replay bundle to {args.output_dir}")
+        print(json.dumps(manifest, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

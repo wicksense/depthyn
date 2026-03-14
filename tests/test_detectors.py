@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from depthyn.comparison import run_detector_comparison
 from depthyn.config import DetectorConfig, ReplayConfig
 from depthyn.detectors.base import DetectorUnavailableError
 from depthyn.detectors.factory import create_detector
+from depthyn.pipeline import run_replay
 
 
 class DetectorTests(unittest.TestCase):
@@ -40,6 +42,30 @@ class DetectorTests(unittest.TestCase):
             )
         )
         self.assertEqual(detector.name, "dsvt")
+        self.assertEqual(detector.input_mode, "full")
+
+    def test_factory_builds_precomputed_detector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prediction_dir = root / "predictions"
+            prediction_dir.mkdir()
+            (prediction_dir / "frame_0001.json").write_text(
+                json.dumps({"detections": []}),
+                encoding="utf-8",
+            )
+
+            detector = create_detector(
+                ReplayConfig(
+                    input_dir=Path("."),
+                    output_json=Path("summary.json"),
+                    detector=DetectorConfig(
+                        kind="precomputed",
+                        prediction_path=prediction_dir,
+                    ),
+                )
+            )
+
+        self.assertEqual(detector.name, "precomputed")
         self.assertEqual(detector.input_mode, "full")
 
     def test_comparison_reports_missing_mmdet3d_config_cleanly(self) -> None:
@@ -81,6 +107,65 @@ class DetectorTests(unittest.TestCase):
             self.assertEqual(comparison["detector_runs"][0]["status"], "ok")
             self.assertEqual(comparison["detector_runs"][1]["status"], "error")
             self.assertIn("requires a model config path", comparison["detector_runs"][1]["error"])
+
+    def test_precomputed_detector_replays_saved_predictions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frame = root / "frame_0001.csv"
+            prediction_dir = root / "predictions"
+            prediction_dir.mkdir()
+
+            frame.write_text(
+                "TIMESTAMP (ns),X1 (m),Y1 (m),Z1 (m)\n"
+                "1,0.0,0.0,0.5\n"
+                "2,0.2,0.1,0.6\n"
+                "3,0.3,0.2,0.7\n",
+                encoding="utf-8",
+            )
+            (prediction_dir / "frame_0001.json").write_text(
+                json.dumps(
+                    {
+                        "detections": [
+                            {
+                                "detection_id": "ml-0001",
+                                "centroid": [10.0, 5.0, 1.2],
+                                "bbox_min": [9.0, 4.5, 0.4],
+                                "bbox_max": [11.0, 5.5, 2.0],
+                                "label": "vehicle",
+                                "score": 0.91,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = run_replay(
+                ReplayConfig(
+                    input_dir=root,
+                    output_json=root / "summary.json",
+                    detector=DetectorConfig(
+                        kind="precomputed",
+                        prediction_path=prediction_dir,
+                    ),
+                    mode="mobile",
+                    voxel_size_m=0.0,
+                    min_range_m=0.0,
+                    max_range_m=100.0,
+                    z_min_m=-10.0,
+                    z_max_m=10.0,
+                )
+            )
+
+            self.assertEqual(summary["metrics"]["total_detections"], 1)
+            self.assertEqual(summary["metrics"]["label_counts"], {"vehicle": 1})
+            self.assertEqual(summary["metrics"]["avg_detection_score"], 0.91)
+            self.assertEqual(
+                summary["frame_summaries"][0]["detections"][0]["label"], "vehicle"
+            )
+            self.assertEqual(
+                summary["frame_summaries"][0]["detections"][0]["source"], "precomputed"
+            )
 
 
 if __name__ == "__main__":

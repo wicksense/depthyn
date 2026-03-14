@@ -47,6 +47,9 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     total_foreground_points = 0
     total_detections = 0
     max_active_tracks = 0
+    label_counts: dict[str, int] = {}
+    total_detection_score = 0.0
+    scored_detection_count = 0
     timestamp_ns_values: list[int] = []
     all_zone_events: list[dict[str, object]] = []
     scene_min = [float("inf"), float("inf"), float("inf")]
@@ -84,6 +87,11 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             detector_metadata = detector_result.metadata
             active_tracks = tracker.update(detections, frame.timestamp_ns)
             total_detections += len(detections)
+            for detection in detections:
+                label_counts[detection.label] = label_counts.get(detection.label, 0) + 1
+                if detection.score is not None:
+                    total_detection_score += detection.score
+                    scored_detection_count += 1
 
         zone_occupancy = []
         zone_events = []
@@ -174,6 +182,12 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             "total_tracks": len(tracks),
             "max_active_tracks": max_active_tracks,
             "total_zone_events": len(all_zone_events),
+            "label_counts": dict(sorted(label_counts.items())),
+            "avg_detection_score": (
+                round(total_detection_score / scored_detection_count, 4)
+                if scored_detection_count
+                else None
+            ),
             "detector_name": config.detector.kind,
         },
         "frame_summaries": frame_summaries,

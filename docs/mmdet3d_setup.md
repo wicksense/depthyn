@@ -4,6 +4,11 @@ Depthyn keeps the ML backend out of the main project environment on purpose.
 MMDetection3D is treated as an optional detector host, not as the foundation of
 the repo.
 
+If you want to use MMDetection3D during Stage 1, the cleanest flow is:
+- export replay frames with `depthyn prepare-ml-replay`
+- run MMDetection3D externally on those frames
+- import the normalized detections back through the `precomputed` detector path
+
 That means you can bring up MMDetection3D once, point Depthyn at that Python,
 and keep the replay/viewer tooling lightweight.
 

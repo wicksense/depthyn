@@ -86,6 +86,7 @@ for counts, tripwires, dwell analytics, and alerts.
 
 Detector backends are replaceable:
 - `baseline`
+- `precomputed`
 - optional `centerpoint`
 - optional `dsvt`
 - optional `pointpillars`
@@ -97,6 +98,24 @@ detector backend -> normalized detections -> tracks -> scene state
 ```
 
 That keeps the rest of the platform stable even if we swap model frameworks.
+
+## Stage 1 ML Replay Boundary
+
+The current preferred ML-evaluation loop is:
+
+```text
+converted replay
+  -> Depthyn frame export
+  -> external detector runner
+  -> normalized prediction JSON
+  -> Depthyn precomputed detector
+  -> tracking / scene state / rules / comparison / viewer
+```
+
+Why this exists:
+- it lets us compare ML outputs before committing to one heavy framework
+- it keeps the replay and product stack usable without `torch` in the main env
+- it gives us a stable normalized contract for imported detections
 
 ## Optional ML Adapter
 

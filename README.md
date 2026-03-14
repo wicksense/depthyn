@@ -85,6 +85,62 @@ PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
 
 Then open the printed URL.
 
+## Stage 1 ML Replay Workflow
+
+Depthyn now supports a model-host-agnostic Stage 1 workflow for recorded-data ML
+evaluation:
+
+1. export filtered replay frames in ML-friendly `XYZI` binary format
+2. run any external detector you want against those exported frames
+3. import the normalized detections back into Depthyn
+4. compare them against the built-in baseline on the same replay
+
+Export a replay bundle for ML runners:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli prepare-ml-replay \
+  SampleData/output-26/converted_csv \
+  --output-dir artifacts/ml-replay \
+  --max-frames 20
+```
+
+Run replay using imported predictions:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli replay \
+  SampleData/output-26/converted_csv \
+  --output artifacts/precomputed-summary.json \
+  --detector precomputed \
+  --precomputed-path /path/to/predictions
+```
+
+Compare baseline vs imported ML detections:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli compare \
+  SampleData/output-26/converted_csv \
+  --output-dir artifacts/detector-comparison \
+  --detectors baseline precomputed \
+  --precomputed-path /path/to/predictions
+```
+
+Prediction input formats:
+- a directory of per-frame JSON files named `<frame_id>.json`
+- a single JSON file containing frame-to-detections mappings
+
+Each detection entry should include:
+- `centroid`
+- `bbox_min`
+- `bbox_max`
+
+Optional fields:
+- `detection_id`
+- `label`
+- `score`
+- `heading_rad`
+- `point_count`
+- `cell_count`
+
 ## Replay Output
 
 Each frame summary now includes:
@@ -108,6 +164,7 @@ That structure is intended to become the basis for future REST/WebSocket APIs.
 
 Built in:
 - `baseline`: clustering + tracking
+- `precomputed`: imported normalized detections from any external model runner
 
 Optional:
 - `centerpoint`
