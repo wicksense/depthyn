@@ -141,6 +141,44 @@ Optional fields:
 - `point_count`
 - `cell_count`
 
+## Stage 1b CenterPoint Workflow
+
+Depthyn now also includes a batch MMDetection3D replay path so the first real
+learned-detector run can happen on recorded data without loading the model once
+per frame.
+
+Low-level flow:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli run-mmdet3d-replay \
+  --manifest-json artifacts/ml-replay/manifest.json \
+  --output-json artifacts/centerpoint-predictions.json \
+  --model-name centerpoint \
+  --mmdet3d-python /path/to/mmdet3d-env/bin/python \
+  --mmdet3d-repo /path/to/mmdetection3d \
+  --ml-config /path/to/centerpoint.py \
+  --ml-checkpoint /path/to/centerpoint.pth
+```
+
+One-command export + infer + compare:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli compare-mmdet3d-replay \
+  SampleData/output-26/converted_csv \
+  --output-dir artifacts/centerpoint-stage1 \
+  --model-name centerpoint \
+  --mmdet3d-python /path/to/mmdet3d-env/bin/python \
+  --mmdet3d-repo /path/to/mmdetection3d \
+  --ml-config /path/to/centerpoint.py \
+  --ml-checkpoint /path/to/centerpoint.pth
+```
+
+That command writes:
+- exported replay frames under `artifacts/centerpoint-stage1/ml-replay`
+- normalized predictions as JSON
+- baseline vs CenterPoint comparison outputs
+- replay summaries that can be viewed in the browser
+
 ## Replay Output
 
 Each frame summary now includes:

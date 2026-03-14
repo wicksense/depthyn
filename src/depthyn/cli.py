@@ -6,6 +6,10 @@ from pathlib import Path
 
 from depthyn.comparison import run_detector_comparison
 from depthyn.config import DetectorConfig, ReplayConfig
+from depthyn.mmdet3d_replay import (
+    run_mmdet3d_manifest_inference,
+    run_stage1_mmdet3d_compare,
+)
 from depthyn.ml_prep import export_ml_replay_bundle
 from depthyn.pipeline import run_replay, write_summary
 from depthyn.viewer import serve_viewer
@@ -45,6 +49,51 @@ def _add_mmdet3d_options(parser: argparse.ArgumentParser) -> None:
         "--ml-device",
         default="cuda:0",
         help="Torch device passed through to MMDetection3D, for example cuda:0 or cpu.",
+    )
+
+
+def _add_ml_export_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Optional cap on frames exported or processed.",
+    )
+    parser.add_argument(
+        "--voxel-size",
+        type=float,
+        default=0.3,
+        help="Voxel size in meters for downsampling while loading frames.",
+    )
+    parser.add_argument(
+        "--min-range",
+        type=float,
+        default=1.0,
+        help="Minimum range in meters for exported points.",
+    )
+    parser.add_argument(
+        "--max-range",
+        type=float,
+        default=60.0,
+        help="Maximum range in meters for exported points.",
+    )
+    parser.add_argument(
+        "--z-min",
+        type=float,
+        default=-2.5,
+        help="Minimum Z in meters for exported points.",
+    )
+    parser.add_argument(
+        "--z-max",
+        type=float,
+        default=4.5,
+        help="Maximum Z in meters for exported points.",
+    )
+    parser.add_argument(
+        "--default-intensity",
+        type=float,
+        default=0.0,
+        help="Intensity value written into exported XYZI frames.",
     )
 
 
@@ -347,48 +396,83 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("artifacts/ml-replay"),
         help="Directory where the exported manifest and frame binaries are written.",
     )
-    export_parser.add_argument(
-        "--max-frames",
-        type=int,
+    _add_ml_export_options(export_parser)
+
+    run_mmdet_parser = subparsers.add_parser(
+        "run-mmdet3d-replay",
+        help="Run MMDetection3D over an exported replay manifest and write normalized predictions.",
+    )
+    run_mmdet_parser.add_argument(
+        "--manifest-json",
+        type=Path,
+        required=True,
+        help="Manifest produced by prepare-ml-replay.",
+    )
+    run_mmdet_parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=Path("artifacts/centerpoint-predictions.json"),
+        help="Where to write normalized frame predictions.",
+    )
+    run_mmdet_parser.add_argument(
+        "--model-name",
+        default="centerpoint",
+        help="Model label used in output metadata and imported replay comparisons.",
+    )
+    _add_mmdet3d_options(run_mmdet_parser)
+
+    compare_mmdet_parser = subparsers.add_parser(
+        "compare-mmdet3d-replay",
+        help="Export replay frames, run MMDetection3D once, and compare the result against the baseline.",
+    )
+    compare_mmdet_parser.add_argument(
+        "input_dir",
+        type=Path,
+        help="Directory containing converted frame CSV files.",
+    )
+    compare_mmdet_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("artifacts/mmdet3d-stage1"),
+        help="Directory where exported frames, predictions, and comparison outputs are written.",
+    )
+    compare_mmdet_parser.add_argument(
+        "--mode",
+        choices=("mobile", "stationary"),
+        default="mobile",
+        help="Replay mode used for the baseline comparison run.",
+    )
+    compare_mmdet_parser.add_argument(
+        "--zone-config",
+        type=Path,
         default=None,
-        help="Optional cap on frames exported.",
+        help="Optional JSON file defining XY zones for scene-rule evaluation.",
     )
-    export_parser.add_argument(
-        "--voxel-size",
+    compare_mmdet_parser.add_argument(
+        "--preview-points",
+        type=int,
+        default=1200,
+        help="Maximum downsampled points per frame to embed for viewer playback.",
+    )
+    compare_mmdet_parser.add_argument(
+        "--cluster-cell-size",
         type=float,
-        default=0.3,
-        help="Voxel size in meters for downsampling while loading frames.",
+        default=0.75,
+        help="XY cell size in meters used for occupancy clustering.",
     )
-    export_parser.add_argument(
-        "--min-range",
+    compare_mmdet_parser.add_argument(
+        "--track-max-distance",
         type=float,
-        default=1.0,
-        help="Minimum range in meters for exported points.",
+        default=3.0,
+        help="Maximum centroid distance in meters for track association.",
     )
-    export_parser.add_argument(
-        "--max-range",
-        type=float,
-        default=60.0,
-        help="Maximum range in meters for exported points.",
+    compare_mmdet_parser.add_argument(
+        "--model-name",
+        default="centerpoint",
+        help="Model label used for predictions and comparison output.",
     )
-    export_parser.add_argument(
-        "--z-min",
-        type=float,
-        default=-2.5,
-        help="Minimum Z in meters for exported points.",
-    )
-    export_parser.add_argument(
-        "--z-max",
-        type=float,
-        default=4.5,
-        help="Maximum Z in meters for exported points.",
-    )
-    export_parser.add_argument(
-        "--default-intensity",
-        type=float,
-        default=0.0,
-        help="Intensity value written into exported XYZI frames.",
-    )
+    _add_ml_export_options(compare_mmdet_parser)
+    _add_mmdet3d_options(compare_mmdet_parser)
     return parser
 
 
@@ -459,6 +543,47 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"Wrote ML replay bundle to {args.output_dir}")
         print(json.dumps(manifest, indent=2))
+        return 0
+    if args.command == "run-mmdet3d-replay":
+        payload = run_mmdet3d_manifest_inference(
+            manifest_path=args.manifest_json,
+            output_path=args.output_json,
+            backend_python=args.mmdet3d_python,
+            backend_repo=args.mmdet3d_repo,
+            config_path=args.ml_config,
+            checkpoint_path=args.ml_checkpoint,
+            score_threshold=args.ml_score_threshold,
+            model_name=args.model_name,
+            device=args.ml_device,
+        )
+        print(f"Wrote normalized predictions to {args.output_json}")
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "compare-mmdet3d-replay":
+        result = run_stage1_mmdet3d_compare(
+            input_dir=args.input_dir,
+            output_dir=args.output_dir,
+            mode=args.mode,
+            zone_config=args.zone_config,
+            max_frames=args.max_frames,
+            preview_point_limit=args.preview_points,
+            voxel_size_m=args.voxel_size,
+            cluster_cell_size_m=args.cluster_cell_size,
+            track_max_distance_m=args.track_max_distance,
+            min_range_m=args.min_range,
+            max_range_m=args.max_range,
+            z_min_m=args.z_min,
+            z_max_m=args.z_max,
+            default_intensity=args.default_intensity,
+            backend_python=args.mmdet3d_python,
+            backend_repo=args.mmdet3d_repo,
+            config_path=args.ml_config,
+            checkpoint_path=args.ml_checkpoint,
+            score_threshold=args.ml_score_threshold,
+            model_name=args.model_name,
+            device=args.ml_device,
+        )
+        print(json.dumps(result, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

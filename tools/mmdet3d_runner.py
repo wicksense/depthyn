@@ -79,17 +79,47 @@ def _normalize_result(result, model_name: str, score_threshold: float, class_nam
     return detections
 
 
+def _load_single_frame_cloud(payload, np):
+    points_xyz = payload["points_xyz"]
+    points = np.asarray(points_xyz, dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("Expected points_xyz with shape [N, 3].")
+
+    if points.shape[0] == 0:
+        return None
+
+    intensities = np.full(
+        (points.shape[0], 1),
+        payload.get("default_intensity", 0.0),
+        dtype=np.float32,
+    )
+    return np.concatenate([points, intensities], axis=1)
+
+
+def _load_xyzi_bin(path, np):
+    point_cloud = np.fromfile(path, dtype=np.float32)
+    if point_cloud.size == 0:
+        return None
+    if point_cloud.size % 4 != 0:
+        raise ValueError(f"Expected XYZI float32 data in {path}")
+    return point_cloud.reshape(-1, 4)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mmdet3d-repo", type=Path, default=None)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--input-json", type=Path, required=True)
+    parser.add_argument("--input-json", type=Path, default=None)
+    parser.add_argument("--manifest-json", type=Path, default=None)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--score-threshold", type=float, default=0.25)
     parser.add_argument("--model-name", default="centerpoint")
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args(argv)
+
+    if (args.input_json is None) == (args.manifest_json is None):
+        raise ValueError("Provide exactly one of --input-json or --manifest-json.")
 
     if args.mmdet3d_repo is not None:
         sys.path.insert(0, str(args.mmdet3d_repo))
@@ -98,18 +128,42 @@ def main(argv: list[str] | None = None) -> int:
 
     from mmdet3d.apis import inference_detector, init_model
 
-    payload = json.loads(args.input_json.read_text(encoding="utf-8"))
-    points_xyz = payload["points_xyz"]
-    points = np.asarray(points_xyz, dtype=np.float32)
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise ValueError("Expected points_xyz with shape [N, 3].")
+    model = init_model(str(args.config), str(args.checkpoint), device=args.device)
+    class_names = _resolve_class_names(model)
 
-    if points.shape[0] == 0:
+    if args.input_json is not None:
+        payload = json.loads(args.input_json.read_text(encoding="utf-8"))
+        point_cloud = _load_single_frame_cloud(payload, np)
+
+        if point_cloud is None:
+            args.output_json.write_text(
+                json.dumps(
+                    {
+                        "detections": [],
+                        "stdout": f"{args.model_name} detections: 0",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return 0
+
+        with tempfile.TemporaryDirectory(prefix="depthyn-mmdet3d-") as temp_dir:
+            point_path = Path(temp_dir) / "frame.bin"
+            point_cloud.tofile(point_path)
+            result = inference_detector(model, str(point_path))
+
+        detections = _normalize_result(
+            result,
+            args.model_name,
+            args.score_threshold,
+            class_names,
+        )
         args.output_json.write_text(
             json.dumps(
                 {
-                    "detections": [],
-                    "stdout": f"{args.model_name} detections: 0",
+                    "detections": detections,
+                    "stdout": f"{args.model_name} detections: {len(detections)}",
                 },
                 indent=2,
             ),
@@ -117,23 +171,49 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    intensities = np.full((points.shape[0], 1), payload.get("default_intensity", 0.0), dtype=np.float32)
-    point_cloud = np.concatenate([points, intensities], axis=1)
+    manifest = json.loads(args.manifest_json.read_text(encoding="utf-8"))
+    raw_frames = manifest.get("frames", [])
+    if not isinstance(raw_frames, list):
+        raise ValueError("Manifest 'frames' value must be a list.")
 
-    model = init_model(str(args.config), str(args.checkpoint), device=args.device)
-    class_names = _resolve_class_names(model)
+    frame_predictions: list[dict[str, object]] = []
+    total_detections = 0
+    manifest_root = args.manifest_json.parent
 
-    with tempfile.TemporaryDirectory(prefix="depthyn-mmdet3d-") as temp_dir:
-        point_path = Path(temp_dir) / "frame.bin"
-        point_cloud.tofile(point_path)
-        result = inference_detector(model, str(point_path))
+    for raw_frame in raw_frames:
+        frame_id = raw_frame["frame_id"]
+        point_path = manifest_root / raw_frame["points_path"]
+        point_cloud = _load_xyzi_bin(point_path, np)
+        if point_cloud is None:
+            detections = []
+        else:
+            result = inference_detector(model, str(point_path))
+            detections = _normalize_result(
+                result,
+                args.model_name,
+                args.score_threshold,
+                class_names,
+            )
+        total_detections += len(detections)
+        frame_predictions.append(
+            {
+                "frame_id": frame_id,
+                "timestamp_ns": raw_frame.get("timestamp_ns"),
+                "detections": detections,
+            }
+        )
 
-    detections = _normalize_result(result, args.model_name, args.score_threshold, class_names)
     args.output_json.write_text(
         json.dumps(
             {
-                "detections": detections,
-                "stdout": f"{args.model_name} detections: {len(detections)}",
+                "model_name": args.model_name,
+                "frame_predictions": frame_predictions,
+                "frames_processed": len(frame_predictions),
+                "total_detections": total_detections,
+                "stdout": (
+                    f"{args.model_name} frames: {len(frame_predictions)}, "
+                    f"detections: {total_detections}"
+                ),
             },
             indent=2,
         ),

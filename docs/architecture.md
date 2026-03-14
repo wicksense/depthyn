@@ -117,6 +117,18 @@ Why this exists:
 - it keeps the replay and product stack usable without `torch` in the main env
 - it gives us a stable normalized contract for imported detections
 
+Stage 1b adds a batched model-hosted path:
+
+```text
+prepare-ml-replay
+  -> MMDetection3D batch runner
+  -> normalized prediction JSON
+  -> precomputed detector
+  -> compare baseline vs learned detector
+```
+
+That path is designed for the first real `CenterPoint` run on recorded data.
+
 ## Optional ML Adapter
 
 The current ML path is intentionally isolated behind an out-of-process adapter.

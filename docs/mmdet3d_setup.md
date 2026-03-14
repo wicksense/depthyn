@@ -37,6 +37,19 @@ Why clone the repo even if `mmdet3d` is installed:
 
 ## Depthyn Usage
 
+Batch replay inference from an exported manifest:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli run-mmdet3d-replay \
+  --manifest-json artifacts/ml-replay/manifest.json \
+  --output-json artifacts/centerpoint-predictions.json \
+  --model-name centerpoint \
+  --mmdet3d-python /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/bin/python \
+  --mmdet3d-repo /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmdet3d \
+  --ml-config /path/to/centerpoint.py \
+  --ml-checkpoint /path/to/centerpoint.pth
+```
+
 Single detector replay:
 
 ```bash
@@ -63,6 +76,19 @@ PYTHONPATH=src python3 -m depthyn.cli compare \
   --centerpoint-checkpoint /path/to/centerpoint.pth \
   --dsvt-config /path/to/dsvt.py \
   --dsvt-checkpoint /path/to/dsvt.pth
+```
+
+One-command Stage 1b workflow:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli compare-mmdet3d-replay \
+  SampleData/output-26/converted_csv \
+  --output-dir artifacts/centerpoint-stage1 \
+  --model-name centerpoint \
+  --mmdet3d-python /home/spriteadmin/Documents/LiDAR-Object-Detection/.miniforge3/envs/depthyn-mmdet3d/bin/python \
+  --mmdet3d-repo /home/spriteadmin/Documents/LiDAR-Object-Detection/.mmdet3d \
+  --ml-config /path/to/centerpoint.py \
+  --ml-checkpoint /path/to/centerpoint.pth
 ```
 
 ## Important Note About Depthyn Replay Data

@@ -131,6 +131,16 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 - Stage 1 is now split into two practical substeps:
   - Stage 1a: ML replay prep/import loop and comparison plumbing
   - Stage 1b: first real learned detector host and model execution
+- Added Stage 1b MMDetection3D batch orchestration:
+  - `run-mmdet3d-replay` for batch inference over an exported replay manifest
+  - `compare-mmdet3d-replay` for export -> inference -> import -> compare in one command
+  - `tools/mmdet3d_runner.py` now supports both single-frame and manifest-driven batch inference
+- Verified locally for Stage 1b orchestration:
+  - all 15 unit tests pass
+  - Python compilation passes for `src`, `tests`, and `tools`
+  - orchestration logic is tested with mocked MMDetection3D execution
+- Not yet verified locally for Stage 1b model execution:
+  - real `CenterPoint` inference has not run in this shell yet because the required external MMDetection3D environment is still not available here
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
@@ -167,6 +177,9 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 ## Naming Direction
 - Project/repo name: `Depthyn`
 - Subtitle direction: `3D tracking and scene intelligence from LiDAR`
+
+## Collaboration Preferences
+- After each completed pipeline item, provide the user with the exact commands needed to run and test that item locally.
 
 ## Current Product Scope
 - Depthyn should support both live sensor operation and recorded data replay
@@ -289,6 +302,7 @@ Depthyn will be built in this order and tackled one stage at a time.
 ## Current Next Step
 - Execute Stage 1 first:
   - Stage 1a is now in place
-  - next is Stage 1b: hook up the first true learned detector run on recorded replay
-  - compare it against the baseline using the existing export/import path or a direct backend
+  - Stage 1b orchestration is now in place
+  - next is the first verified real `CenterPoint` run on recorded replay
+  - compare it against the baseline using the new batch MMDetection3D path
   - keep source ingestion work for the following stage unless ML setup blocks progress
