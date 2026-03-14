@@ -37,6 +37,7 @@ class ReplayConfig:
     input_dir: Path
     output_json: Path
     mode: str = "mobile"
+    source_type: str = "auto"
     zone_config: Path | None = None
     max_frames: int | None = None
     preview_point_limit: int = 1200

@@ -193,12 +193,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     replay_parser = subparsers.add_parser(
         "replay",
-        help="Run the replay pipeline on converted LiDAR CSV frames.",
+        help="Run the replay pipeline on LiDAR data (CSV or Ouster pcap).",
     )
     replay_parser.add_argument(
         "input_dir",
         type=Path,
-        help="Directory containing converted frame CSV files.",
+        help="Directory containing converted CSV files or Ouster pcap files.",
+    )
+    replay_parser.add_argument(
+        "--source-type",
+        choices=("auto", "csv", "pcap"),
+        default="auto",
+        help="Input source type. 'auto' detects based on file extensions.",
     )
     replay_parser.add_argument(
         "--output",
@@ -269,7 +275,13 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument(
         "input_dir",
         type=Path,
-        help="Directory containing converted frame CSV files.",
+        help="Directory containing converted CSV files or Ouster pcap files.",
+    )
+    compare_parser.add_argument(
+        "--source-type",
+        choices=("auto", "csv", "pcap"),
+        default="auto",
+        help="Input source type. 'auto' detects based on file extensions.",
     )
     compare_parser.add_argument(
         "--output-dir",
@@ -496,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output,
             mode=args.mode,
+            source_type=args.source_type,
             zone_config=args.zone_config,
             max_frames=args.max_frames,
             preview_point_limit=args.preview_points,
@@ -523,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output_dir / "placeholder.json",
             mode=args.mode,
+            source_type=args.source_type,
             zone_config=args.zone_config,
             max_frames=args.max_frames,
             preview_point_limit=args.preview_points,
