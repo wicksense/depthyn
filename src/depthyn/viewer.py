@@ -23,11 +23,15 @@ def serve_viewer(summary_path: Path, host: str, port: int) -> None:
 
     with socketserver.ThreadingTCPServer((host, port), handler) as server:
         summary_param = urllib.parse.quote(str(summary_rel))
-        viewer_url = (
+        viewer_3d_url = (
+            f"http://{host}:{port}/viewer/viewer3d.html?data=/{summary_param}"
+        )
+        viewer_2d_url = (
             f"http://{host}:{port}/viewer/index.html?data=/{summary_param}"
         )
         print(f"Serving Depthyn viewer from {project_root}")
-        print(f"Open: {viewer_url}")
+        print(f"3D Viewer: {viewer_3d_url}")
+        print(f"2D Viewer: {viewer_2d_url}")
         try:
             server.serve_forever()
         except KeyboardInterrupt:

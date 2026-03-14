@@ -324,13 +324,29 @@ Depthyn will be built in this order and tackled one stage at a time.
 - Exit criteria:
   - multiple sensors can feed one shared scene without rewriting single-sensor logic
 
+## 3D Viewer
+- Built a Three.js WebGL 3D viewer for replay data (viewer/viewer3d.html)
+- Dark theme, original design (not a Gemini copy)
+- Features:
+  - 3D point cloud rendered with height-based color gradient (blue -> purple -> pink -> orange)
+  - 3D wireframe bounding boxes on detections with heading rotation
+  - Per-class color coding (car=orange, truck=purple, pedestrian=green, bicycle=blue)
+  - Floating labels with class name and confidence score
+  - Track trails (last 30 frames)
+  - Orbit / pan / zoom camera controls (OrbitControls)
+  - Frame playback with slider, prev/next, speed control, keyboard shortcuts
+  - Sidebar: scene stats, object list with cards, legend
+  - Ground grid with origin axes
+  - Scene fog for depth cues
+- serve-viewer now prints both 3D and 2D viewer URLs
+- Three.js loaded from CDN (three@0.170.0), no build step needed
+- Pulled forward from Stage 6 because good 3D visualization is needed for detector evaluation
+
 ## Current Next Step
-- Stage 1 is complete -- first real ML detector runs on recorded replay
-- Next: Stage 2 (Detector Evaluation And Tuning)
-  - evaluate CenterPoint ONNX quality on more sample data
-  - compare detection quality vs baseline clustering
-  - decide if model is good enough or needs fine-tuning on Ouster data
-  - optionally enable GPU acceleration for ONNX (needs CUDA 12 / cuDNN 9 or onnxruntime 1.16 for CUDA 11.8)
+- 3D viewer is complete
+- GPU ONNX inference is working (onnxruntime-gpu 1.23.2, CUDA 12, cuDNN 9)
+- Next priority: Stage 3 (Native Ouster Source Adapters) to get better data flowing
+- Then Stage 2 (Detector Evaluation) with better data + 3D viewer
 
 ## Current ML Environment
 - Env name: `depthyn-mmdet3d`

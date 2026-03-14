@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Depthyn 3D Viewer</title>
+    <link rel="stylesheet" href="viewer3d.css">
+  </head>
+  <body>
+    <div id="canvas-container"></div>
+
+    <header id="top-bar">
+      <div class="top-left">
+        <h1>Depthyn</h1>
+        <span class="subtitle" id="status-label">No data loaded</span>
+      </div>
+      <div class="top-right">
+        <label class="file-btn">
+          Open Replay
+          <input id="file-input" type="file" accept=".json,application/json">
+        </label>
+      </div>
+    </header>
+
+    <div id="playback-bar">
+      <button id="btn-prev" title="Previous frame">&lsaquo;</button>
+      <button id="btn-play" title="Play / Pause">Play</button>
+      <button id="btn-next" title="Next frame">&rsaquo;</button>
+      <input id="frame-slider" type="range" min="0" max="0" value="0">
+      <span id="frame-counter">0 / 0</span>
+      <label>
+        Speed
+        <select id="speed-select">
+          <option value="4">4x</option>
+          <option value="2">2x</option>
+          <option value="1" selected>1x</option>
+          <option value="0.5">0.5x</option>
+          <option value="0.25">0.25x</option>
+        </select>
+      </label>
+    </div>
+
+    <aside id="sidebar">
+      <section id="info-panel">
+        <h2>Scene</h2>
+        <dl id="scene-stats"></dl>
+      </section>
+      <section id="objects-panel">
+        <h2>Objects</h2>
+        <div id="object-list"></div>
+      </section>
+      <section id="legend-panel">
+        <h2>Legend</h2>
+        <ul id="legend-list"></ul>
+      </section>
+    </aside>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+    </script>
+    <script type="module" src="viewer3d.js"></script>
+  </body>
+</html>
