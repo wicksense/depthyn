@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 from pathlib import Path
 
 from depthyn.config import ReplayConfig
@@ -36,6 +37,9 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     total_foreground_points = 0
     total_detections = 0
     max_active_tracks = 0
+    timestamp_ns_values: list[int] = []
+    scene_min = [float("inf"), float("inf"), float("inf")]
+    scene_max = [float("-inf"), float("-inf"), float("-inf")]
 
     for frame_index, frame_path in enumerate(frame_paths):
         frame = load_converted_csv_frame(
@@ -46,6 +50,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             z_min_m=config.z_min_m,
             z_max_m=config.z_max_m,
         )
+        timestamp_ns_values.append(frame.timestamp_ns)
         total_points += len(frame.points)
         stage = "tracking"
         working_points = frame.points
@@ -73,6 +78,24 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
 
         total_foreground_points += len(working_points)
         max_active_tracks = max(max_active_tracks, len(active_tracks))
+        preview_points = _sample_preview_points(
+            working_points if working_points else frame.points,
+            config.preview_point_limit,
+        )
+        active_track_payload = [track.to_dict() for track in active_tracks]
+        _expand_bounds(scene_min, scene_max, preview_points)
+        for detection in detections:
+            _expand_bounds(
+                scene_min,
+                scene_max,
+                [detection.bbox_min, detection.bbox_max, detection.centroid],
+            )
+        for track in active_tracks:
+            _expand_bounds(
+                scene_min,
+                scene_max,
+                [track.bbox_min, track.bbox_max, track.centroid],
+            )
 
         frame_summaries.append(
             {
@@ -84,8 +107,9 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "points_after_filtering": len(frame.points),
                 "foreground_points": len(working_points),
                 "detection_count": len(detections),
+                "preview_points": [list(point) for point in preview_points],
                 "detections": [detection.to_dict() for detection in detections],
-                "active_track_ids": [track.track_id for track in active_tracks],
+                "active_tracks": active_track_payload,
             }
         )
 
@@ -95,6 +119,10 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         "pipeline": "baseline_replay",
         "config": config.to_dict(),
         "frames_processed": len(frame_summaries),
+        "scene_bounds": _finalize_bounds(scene_min, scene_max),
+        "playback": {
+            "median_frame_interval_ms": _median_frame_interval_ms(timestamp_ns_values),
+        },
         "metrics": {
             "avg_points_after_filtering": _safe_average(total_points, len(frame_summaries)),
             "avg_foreground_points": _safe_average(
@@ -120,3 +148,45 @@ def _safe_average(total: int, count: int) -> float:
         return 0.0
     return round(total / count, 2)
 
+
+def _sample_preview_points(
+    points: list[tuple[float, float, float]], limit: int
+) -> list[tuple[float, float, float]]:
+    if limit <= 0 or len(points) <= limit:
+        return points
+    step = max(1, len(points) // limit)
+    sampled = points[::step]
+    return sampled[:limit]
+
+
+def _expand_bounds(
+    scene_min: list[float], scene_max: list[float], points: list[tuple[float, float, float]]
+) -> None:
+    for point in points:
+        for index, value in enumerate(point):
+            if value < scene_min[index]:
+                scene_min[index] = value
+            if value > scene_max[index]:
+                scene_max[index] = value
+
+
+def _finalize_bounds(scene_min: list[float], scene_max: list[float]) -> dict[str, list[float]]:
+    if scene_min[0] == float("inf"):
+        return {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]}
+    return {
+        "min": [round(value, 3) for value in scene_min],
+        "max": [round(value, 3) for value in scene_max],
+    }
+
+
+def _median_frame_interval_ms(timestamp_ns_values: list[int]) -> float:
+    if len(timestamp_ns_values) < 2:
+        return 100.0
+    intervals_ms = [
+        (later - earlier) / 1_000_000.0
+        for earlier, later in zip(timestamp_ns_values, timestamp_ns_values[1:])
+        if later >= earlier
+    ]
+    if not intervals_ms:
+        return 100.0
+    return round(statistics.median(intervals_ms), 2)

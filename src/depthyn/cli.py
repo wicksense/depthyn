@@ -6,6 +6,7 @@ from pathlib import Path
 
 from depthyn.config import ReplayConfig
 from depthyn.pipeline import run_replay, write_summary
+from depthyn.viewer import serve_viewer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +58,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=3.0,
         help="Maximum centroid distance in meters for track association.",
     )
+    replay_parser.add_argument(
+        "--preview-points",
+        type=int,
+        default=1200,
+        help="Maximum downsampled points per frame to embed for viewer playback.",
+    )
+
+    serve_parser = subparsers.add_parser(
+        "serve-viewer",
+        help="Serve the recorded-data viewer for a replay summary JSON.",
+    )
+    serve_parser.add_argument(
+        "--summary",
+        type=Path,
+        required=True,
+        help="Replay summary JSON produced by the replay command.",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface for the local HTTP server.",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port for the local HTTP server.",
+    )
     return parser
 
 
@@ -70,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             output_json=args.output,
             mode=args.mode,
             max_frames=args.max_frames,
+            preview_point_limit=args.preview_points,
             voxel_size_m=args.voxel_size,
             cluster_cell_size_m=args.cluster_cell_size,
             track_max_distance_m=args.track_max_distance,
@@ -79,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote summary to {config.output_json}")
         print(json.dumps(summary["metrics"], indent=2))
         return 0
+    if args.command == "serve-viewer":
+        serve_viewer(args.summary, args.host, args.port)
+        return 0
 
     parser.error(f"Unknown command: {args.command}")
     return 2
@@ -86,4 +119,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

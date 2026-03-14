@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Depthyn Viewer</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="layout">
+      <section class="stage">
+        <div class="toolbar">
+          <div class="brand">
+            <h1>Depthyn Viewer</h1>
+            <p>Recorded LiDAR replay with detections and tracks.</p>
+          </div>
+          <label class="file-picker">
+            <span>Open Replay JSON</span>
+            <input id="file-input" type="file" accept=".json,application/json">
+          </label>
+        </div>
+        <canvas id="scene-canvas" width="1280" height="720"></canvas>
+        <div class="controls">
+          <button id="play-pause" type="button">Play</button>
+          <button id="step-back" type="button">Prev</button>
+          <button id="step-forward" type="button">Next</button>
+          <input id="frame-slider" type="range" min="0" max="0" value="0">
+          <label>
+            Speed
+            <select id="speed-select">
+              <option value="2">2x</option>
+              <option value="1" selected>1x</option>
+              <option value="0.5">0.5x</option>
+              <option value="0.25">0.25x</option>
+            </select>
+          </label>
+        </div>
+      </section>
+      <aside class="sidebar">
+        <section>
+          <h2>Status</h2>
+          <dl id="status-panel" class="stats"></dl>
+        </section>
+        <section>
+          <h2>Frame</h2>
+          <dl id="frame-panel" class="stats"></dl>
+        </section>
+        <section>
+          <h2>Legend</h2>
+          <ul class="legend">
+            <li><span class="swatch points"></span>Preview points</li>
+            <li><span class="swatch detections"></span>Detections</li>
+            <li><span class="swatch tracks"></span>Active tracks</li>
+            <li><span class="swatch trails"></span>Track trails</li>
+          </ul>
+        </section>
+      </aside>
+    </main>
+    <script src="app.js"></script>
+  </body>
+  </html>
+

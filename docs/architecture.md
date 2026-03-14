@@ -41,6 +41,18 @@ The current baseline is deliberately simple:
 This is enough to validate ingest, scene state, summaries, and future UI/API
 contracts without blocking on ML training or model integration.
 
+## Recorded Replay Viewer
+
+Depthyn now includes a lightweight browser viewer for replay bundles:
+- top-down point preview
+- detection boxes
+- active track overlays
+- short track trails
+- playback controls and frame scrubbing
+
+The viewer is intentionally simple and dependency-light so we can inspect real
+data now, before the larger API and operator UI arrive.
+
 ## Next Layers
 
 - learned 3D detection and classification
@@ -48,4 +60,3 @@ contracts without blocking on ML training or model integration.
 - replay timeline and event storage
 - REST/WebSocket API
 - browser UI with 2D and 3D views
-

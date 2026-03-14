@@ -69,6 +69,14 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 - Git repository initialized locally on branch `main`
 - Initial commit created: `8341805` (`Bootstrap Depthyn replay pipeline`)
 - GitHub repository created and pushed: `https://github.com/wicksense/depthyn`
+- Added recorded-data visualization:
+  - replay bundle now includes preview points, active tracks, scene bounds, and playback metadata
+  - browser viewer added under `viewer/`
+  - local `serve-viewer` command added
+- Verified recorded-data viewer path end to end:
+  - replay bundle generated successfully for first 20 sample frames
+  - `viewer/index.html` served successfully over local HTTP
+  - `artifacts/sampledata-26-summary.json` served successfully over local HTTP
 
 ## Model Direction
 - Start LiDAR-only, not camera-first

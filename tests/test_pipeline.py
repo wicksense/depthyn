@@ -57,6 +57,10 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(summary["frames_processed"], 2)
             self.assertEqual(summary["metrics"]["total_tracks"], 2)
+            self.assertIn("scene_bounds", summary)
+            self.assertIn("playback", summary)
+            self.assertEqual(len(summary["frame_summaries"][0]["preview_points"]), 6)
+            self.assertTrue(summary["frame_summaries"][0]["active_tracks"])
 
     def _write_frame(
         self, path: Path, rows: list[tuple[int, float, float, float]]

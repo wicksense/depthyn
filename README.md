@@ -8,8 +8,8 @@ Depthyn is an open source LiDAR perception platform for two workflows:
 
 The first milestone in this repo is a dependency-light baseline that can replay
 converted LiDAR CSV frames, cluster foreground objects, maintain simple 3D
-tracks, and write run summaries we can inspect while the rest of the platform
-comes online.
+tracks, and write replay bundles we can inspect in a browser while the rest of
+the platform comes online.
 
 ## Current Capabilities
 
@@ -17,7 +17,8 @@ comes online.
 - support `mobile` and `stationary` processing modes
 - downsample and filter LiDAR frames
 - build a simple non-ML baseline using clustering + tracking
-- write JSON summaries for downstream API/UI work
+- write JSON replay bundles for downstream API/UI work
+- serve a browser replay viewer for recorded sessions
 
 ## Sample Run
 
@@ -34,6 +35,15 @@ PYTHONPATH=src python3 -m depthyn.cli replay \
 For a stationary scene, switch to `--mode stationary` to enable background
 warmup and foreground suppression.
 
+To view the recorded replay in a browser:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
+  --summary artifacts/sampledata-26-summary.json
+```
+
+Then open the printed URL.
+
 ## Why Start With A Non-ML Baseline?
 
 The product needs more than a detector. It needs a stable end-to-end loop:
@@ -49,6 +59,6 @@ heavier 3D detection models such as PointPillars or CenterPoint.
 
 - `src/depthyn/`: core package
 - `docs/architecture.md`: current system design
+- `viewer/`: browser replay UI
 - `tests/`: unit tests for clustering, tracking, and replay flow
 - `MEMORY.md`: persistent project memory for this workspace
-

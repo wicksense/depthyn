@@ -10,6 +10,7 @@ class ReplayConfig:
     output_json: Path
     mode: str = "mobile"
     max_frames: int | None = None
+    preview_point_limit: int = 1200
     voxel_size_m: float = 0.3
     min_range_m: float = 1.0
     max_range_m: float = 60.0
@@ -31,4 +32,3 @@ class ReplayConfig:
         payload["input_dir"] = str(self.input_dir)
         payload["output_json"] = str(self.output_json)
         return payload
-
