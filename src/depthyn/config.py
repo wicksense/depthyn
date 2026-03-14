@@ -34,6 +34,7 @@ class ReplayConfig:
     input_dir: Path
     output_json: Path
     mode: str = "mobile"
+    zone_config: Path | None = None
     max_frames: int | None = None
     preview_point_limit: int = 1200
     detector: DetectorConfig = field(default_factory=DetectorConfig)
@@ -57,5 +58,7 @@ class ReplayConfig:
         payload = asdict(self)
         payload["input_dir"] = str(self.input_dir)
         payload["output_json"] = str(self.output_json)
+        if self.zone_config is not None:
+            payload["zone_config"] = str(self.zone_config)
         payload["detector"] = self.detector.to_dict()
         return payload

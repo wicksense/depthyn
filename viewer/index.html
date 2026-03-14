@@ -12,7 +12,7 @@
         <div class="toolbar">
           <div class="brand">
             <h1>Depthyn Viewer</h1>
-            <p>Recorded LiDAR replay with detections and tracks.</p>
+            <p>Recorded LiDAR replay with tracks, zones, and scene state.</p>
           </div>
           <label class="file-picker">
             <span>Open Replay JSON</span>
@@ -46,9 +46,14 @@
           <dl id="frame-panel" class="stats"></dl>
         </section>
         <section>
+          <h2>Zones</h2>
+          <div id="zone-panel" class="zone-list"></div>
+        </section>
+        <section>
           <h2>Legend</h2>
           <ul class="legend">
             <li><span class="swatch points"></span>Preview points</li>
+            <li><span class="swatch zones"></span>Configured zones</li>
             <li><span class="swatch detections"></span>Detections</li>
             <li><span class="swatch tracks"></span>Active tracks</li>
             <li><span class="swatch trails"></span>Track trails</li>
@@ -59,4 +64,3 @@
     <script src="app.js"></script>
   </body>
   </html>
-

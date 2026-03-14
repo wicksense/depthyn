@@ -7,6 +7,8 @@ from pathlib import Path
 from depthyn.config import ReplayConfig
 from depthyn.detectors.factory import create_detector
 from depthyn.perception.background import BackgroundModel
+from depthyn.rules import ZoneMonitor, load_zone_definitions
+from depthyn.scene import build_scene_state
 from depthyn.source.converted_csv import (
     discover_converted_csv_frames,
     load_converted_csv_frame,
@@ -20,6 +22,12 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         frame_paths = frame_paths[: config.max_frames]
 
     detector = create_detector(config)
+    zones = (
+        load_zone_definitions(config.zone_config)
+        if config.zone_config is not None
+        else []
+    )
+    zone_monitor = ZoneMonitor(zones) if zones else None
     background_model = (
         BackgroundModel(
             cell_size_m=config.cluster_cell_size_m,
@@ -40,6 +48,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     total_detections = 0
     max_active_tracks = 0
     timestamp_ns_values: list[int] = []
+    all_zone_events: list[dict[str, object]] = []
     scene_min = [float("inf"), float("inf"), float("inf")]
     scene_max = [float("-inf"), float("-inf"), float("-inf")]
 
@@ -76,6 +85,16 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             active_tracks = tracker.update(detections, frame.timestamp_ns)
             total_detections += len(detections)
 
+        zone_occupancy = []
+        zone_events = []
+        if zone_monitor is not None:
+            raw_zone_occupancy, raw_zone_events = zone_monitor.evaluate(
+                active_tracks, frame.timestamp_ns
+            )
+            zone_occupancy = [entry.to_dict() for entry in raw_zone_occupancy]
+            zone_events = [event.to_dict() for event in raw_zone_events]
+            all_zone_events.extend(zone_events)
+
         total_foreground_points += len(working_points)
         max_active_tracks = max(max_active_tracks, len(active_tracks))
         preview_points = _sample_preview_points(
@@ -83,6 +102,17 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             config.preview_point_limit,
         )
         active_track_payload = [track.to_dict() for track in active_tracks]
+        scene_state = build_scene_state(
+            frame_index=frame_index,
+            frame_id=frame.frame_id,
+            timestamp_ns=frame.timestamp_ns,
+            mode=config.mode,
+            stage=stage,
+            detector_name=config.detector.kind,
+            tracks=active_tracks,
+            zones=zone_occupancy,
+            events=zone_events,
+        )
         _expand_bounds(scene_min, scene_max, preview_points)
         for detection in detections:
             _expand_bounds(
@@ -110,6 +140,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "preview_points": [list(point) for point in preview_points],
                 "detections": [detection.to_dict() for detection in detections],
                 "active_tracks": active_track_payload,
+                "scene_state": scene_state.to_dict(),
                 "detector_input_points": len(
                     working_points if detector.input_mode == "foreground" else frame.points
                 ),
@@ -120,11 +151,17 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     tracks = tracker.all_tracks()
     summary: dict[str, object] = {
         "project": "Depthyn",
-        "pipeline": "detector_replay",
+        "pipeline": "scene_replay",
+        "scene_contract": {
+            "version": "v1",
+            "object_source": "tracked_objects",
+            "zone_shape": "axis_aligned_xy_rectangles",
+        },
         "detector": config.detector.to_dict(),
         "config": config.to_dict(),
         "frames_processed": len(frame_summaries),
         "scene_bounds": _finalize_bounds(scene_min, scene_max),
+        "zone_definitions": [zone.to_dict() for zone in zones],
         "playback": {
             "median_frame_interval_ms": _median_frame_interval_ms(timestamp_ns_values),
         },
@@ -136,9 +173,11 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             "total_detections": total_detections,
             "total_tracks": len(tracks),
             "max_active_tracks": max_active_tracks,
+            "total_zone_events": len(all_zone_events),
             "detector_name": config.detector.kind,
         },
         "frame_summaries": frame_summaries,
+        "event_summaries": all_zone_events,
         "track_summaries": [track.to_dict() for track in tracks],
     }
     return summary

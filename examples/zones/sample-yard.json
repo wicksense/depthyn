@@ -1,0 +1,22 @@
+{
+  "zones": [
+    {
+      "zone_id": "loading-bay",
+      "name": "Loading Bay",
+      "min_xy": [-5.0, -2.0],
+      "max_xy": [6.0, 4.0],
+      "color": "#c95b2b",
+      "dwell_alert_seconds": 4.0,
+      "tags": ["operations", "vehicle"]
+    },
+    {
+      "zone_id": "walkway",
+      "name": "Walkway",
+      "min_xy": [8.0, -1.0],
+      "max_xy": [18.0, 3.0],
+      "color": "#0b7a75",
+      "dwell_alert_seconds": 0.0,
+      "tags": ["people"]
+    }
+  ]
+}

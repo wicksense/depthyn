@@ -1,6 +1,8 @@
 # MMDetection3D Setup
 
 Depthyn keeps the ML backend out of the main project environment on purpose.
+MMDetection3D is treated as an optional detector host, not as the foundation of
+the repo.
 
 That means you can bring up MMDetection3D once, point Depthyn at that Python,
 and keep the replay/viewer tooling lightweight.

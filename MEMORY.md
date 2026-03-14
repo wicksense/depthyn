@@ -92,10 +92,32 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
   - `replay --detector baseline` runs successfully on sample data
   - `compare --detectors baseline pointpillars` writes a comparison report
   - unconfigured ML backends currently report clean configuration errors instead of aborting the run
+- Pivoted the repo framing from "detector framework first" to "product platform first"
+- Added product-facing scene contracts:
+  - `src/depthyn/scene/`
+  - per-frame `scene_state` payloads in replay bundles
+- Added first rule-engine scaffolding:
+  - `src/depthyn/rules/`
+  - rectangular XY zones
+  - `entered`, `dwell`, and `exited` events
+- Added optional `--zone-config` support to replay and comparison flows
+- Added sample zone config under `examples/zones/sample-yard.json`
+- Updated the viewer to render zone overlays and per-frame zone status
+- Rewrote docs to describe the platform architecture directly rather than centering MMDetection3D
+- Verified locally after the pivot:
+  - all 10 unit tests pass
+  - sample replay with zone config completes successfully on `SampleData/output-26/converted_csv`
+  - zone-aware sample replay metrics for first 5 frames:
+    - average filtered points per frame: `10282.8`
+    - total detections: `97`
+    - total tracks: `25`
+    - max active tracks: `25`
+    - total zone events: `0`
 
 ## Model Direction
 - Start LiDAR-only, not camera-first
-- Active backend choice: `MMDetection3D`
+- Depthyn is no longer being framed around any one ML framework
+- Current optional detector adapter path: `MMDetection3D`
 - Practical baseline detector: `CenterPoint`
 - Modern detector candidate: `DSVT`
 - Optional speed/reference detector: `PointPillars`
@@ -109,8 +131,15 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
 ## Backend Pivot
 - OpenPCDet install/debug effort was high relative to value for this project
 - User wants to avoid burning Codex limits on repeated heavy installs and is willing to run install commands directly when needed
-- Repo is being refactored away from OpenPCDet toward MMDetection3D
+- Repo has moved away from OpenPCDet
 - Local cleanup removed the temporary `.openpcdet` checkout and Miniforge installer script
+- Repo architecture is now platform-first:
+  - source adapters
+  - scene pipeline
+  - tracking
+  - rules
+  - replay/API/UI
+- MMDetection3D remains an optional backend path, not the foundation of the repo
 
 ## Open Questions
 - Which Gemini features should be in MVP vs later phases?
@@ -133,5 +162,7 @@ Build an open source LiDAR perception platform inspired by Ouster Gemini, using 
   - fixed pose for stationary deployments
   - time-varying pose from SLAM/GPS for mobile recordings
 - Build the first working perception loop with preprocessing, motion/static segmentation, clustering, and tracking
+- Emit stable `scene_state` payloads that future APIs and UIs can consume
+- Build rules on top of tracks and scene state rather than coupling them to a detector framework
 - Add learned 3D detection/classification once replay and scene-state plumbing is stable
 - Zones, alerts, counts, replay, and analytics are built on top of tracked objects and scene state

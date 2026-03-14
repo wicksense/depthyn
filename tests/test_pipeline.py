@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ class PipelineTests(unittest.TestCase):
             root = Path(tmpdir)
             frame1 = root / "frame_0001.csv"
             frame2 = root / "frame_0002.csv"
+            zones = root / "zones.json"
             self._write_frame(
                 frame1,
                 [
@@ -34,12 +36,28 @@ class PipelineTests(unittest.TestCase):
                     (2_000_000_020, 0.7, 0.3, 0.7),
                 ],
             )
+            zones.write_text(
+                json.dumps(
+                    {
+                        "zones": [
+                            {
+                                "zone_id": "near-origin",
+                                "name": "Near Origin",
+                                "min_xy": [-1.0, -1.0],
+                                "max_xy": [1.5, 1.5],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             summary = run_replay(
                 ReplayConfig(
                     input_dir=root,
                     output_json=root / "summary.json",
                     mode="mobile",
+                    zone_config=zones,
                     voxel_size_m=0.0,
                     min_range_m=0.0,
                     max_range_m=100.0,
@@ -57,12 +75,17 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(summary["frames_processed"], 2)
             self.assertEqual(summary["metrics"]["total_tracks"], 2)
-            self.assertEqual(summary["pipeline"], "detector_replay")
+            self.assertEqual(summary["pipeline"], "scene_replay")
             self.assertEqual(summary["metrics"]["detector_name"], "baseline")
             self.assertIn("scene_bounds", summary)
             self.assertIn("playback", summary)
+            self.assertEqual(len(summary["zone_definitions"]), 1)
             self.assertEqual(len(summary["frame_summaries"][0]["preview_points"]), 6)
             self.assertTrue(summary["frame_summaries"][0]["active_tracks"])
+            self.assertIn("scene_state", summary["frame_summaries"][0])
+            self.assertEqual(
+                summary["frame_summaries"][0]["scene_state"]["zones"][0]["object_count"], 1
+            )
             self.assertEqual(
                 summary["frame_summaries"][0]["detections"][0]["source"], "baseline"
             )

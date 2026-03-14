@@ -15,6 +15,7 @@ const speedSelect = document.getElementById("speed-select");
 const fileInput = document.getElementById("file-input");
 const statusPanel = document.getElementById("status-panel");
 const framePanel = document.getElementById("frame-panel");
+const zonePanel = document.getElementById("zone-panel");
 
 function resizeCanvas() {
   const ratio = window.devicePixelRatio || 1;
@@ -59,6 +60,7 @@ function render() {
   const project = makeProjector(bounds, rect.width, rect.height);
 
   drawGrid(project, rect.width, rect.height);
+  drawZones(project, bundle.zone_definitions || []);
   drawPoints(project, frame.preview_points);
   drawDetections(project, frame.detections);
   drawTrails(project, bundle.frame_summaries, state.frameIndex);
@@ -114,6 +116,28 @@ function drawGrid(project, width, height) {
     ctx.lineTo(width, y);
     ctx.stroke();
   }
+}
+
+function drawZones(project, zones) {
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.font = "12px IBM Plex Sans";
+  for (const zone of zones) {
+    const [x1, y1] = project([zone.min_xy[0], zone.min_xy[1], 0]);
+    const [x2, y2] = project([zone.max_xy[0], zone.max_xy[1], 0]);
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+    const stroke = zone.color || "#6f8f77";
+    ctx.fillStyle = hexToRgba(stroke, 0.12);
+    ctx.strokeStyle = hexToRgba(stroke, 0.65);
+    ctx.fillRect(left, top, width, height);
+    ctx.strokeRect(left, top, width, height);
+    ctx.fillStyle = "rgba(18, 49, 38, 0.92)";
+    ctx.fillText(zone.name, left + 8, top + 18);
+  }
+  ctx.restore();
 }
 
 function drawPoints(project, points) {
@@ -195,6 +219,7 @@ function updatePanels() {
   if (!bundle || !frame) {
     renderPanel(statusPanel, [["Status", "No data loaded"]]);
     renderPanel(framePanel, []);
+    renderZonePanel([], []);
     return;
   }
 
@@ -203,9 +228,11 @@ function updatePanels() {
     ["Frames", String(bundle.frames_processed)],
     ["Tracks", String(bundle.metrics.total_tracks)],
     ["Detections", String(bundle.metrics.total_detections)],
+    ["Zones", String((bundle.zone_definitions || []).length)],
     ["Interval", `${bundle.playback.median_frame_interval_ms} ms`],
   ]);
 
+  const sceneState = frame.scene_state || { zones: [], events: [] };
   renderPanel(framePanel, [
     ["Frame", `${frame.frame_index + 1} / ${bundle.frame_summaries.length}`],
     ["Frame ID", frame.frame_id],
@@ -214,8 +241,11 @@ function updatePanels() {
     ["Foreground", String(frame.foreground_points)],
     ["Detections", String(frame.detection_count)],
     ["Active tracks", String(frame.active_tracks.length)],
+    ["Zone objects", String(totalZoneObjects(sceneState.zones || []))],
+    ["Zone events", String((sceneState.events || []).length)],
     ["Stage", frame.stage],
   ]);
+  renderZonePanel(sceneState.zones || [], sceneState.events || []);
 }
 
 function renderPanel(node, entries) {
@@ -230,6 +260,75 @@ function renderPanel(node, entries) {
     wrapper.appendChild(dd);
     node.appendChild(wrapper);
   }
+}
+
+function renderZonePanel(zones, events) {
+  zonePanel.innerHTML = "";
+  if (!zones.length) {
+    zonePanel.textContent = "No zone config loaded for this replay.";
+    return;
+  }
+
+  for (const zone of zones) {
+    const card = document.createElement("article");
+    card.className = "zone-card";
+
+    const heading = document.createElement("div");
+    heading.className = "zone-heading";
+
+    const swatch = document.createElement("span");
+    swatch.className = "zone-chip";
+    swatch.style.backgroundColor = zone.color || "#6f8f77";
+
+    const title = document.createElement("strong");
+    title.textContent = zone.zone_name;
+
+    const count = document.createElement("span");
+    count.className = "zone-count";
+    count.textContent = `${zone.object_count} active`;
+
+    heading.appendChild(swatch);
+    heading.appendChild(title);
+    heading.appendChild(count);
+
+    const detail = document.createElement("p");
+    detail.textContent = zone.track_ids.length
+      ? `Tracks: ${zone.track_ids.map((trackId) => `#${trackId}`).join(", ")}`
+      : "No active tracks in this zone";
+
+    card.appendChild(heading);
+    card.appendChild(detail);
+
+    const matchingEvents = events.filter((event) => event.zone_id === zone.zone_id);
+    if (matchingEvents.length) {
+      const eventLine = document.createElement("p");
+      eventLine.className = "zone-events";
+      eventLine.textContent = matchingEvents
+        .map((event) => `${event.event_type} #${event.track_id}`)
+        .join(" | ");
+      card.appendChild(eventLine);
+    }
+
+    zonePanel.appendChild(card);
+  }
+}
+
+function totalZoneObjects(zones) {
+  return zones.reduce((sum, zone) => sum + (zone.object_count || 0), 0);
+}
+
+function hexToRgba(hex, alpha) {
+  if (!hex || !hex.startsWith("#") || (hex.length !== 7 && hex.length !== 4)) {
+    return `rgba(111, 143, 119, ${alpha})`;
+  }
+
+  const normalized = hex.length === 4
+    ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
+    : hex;
+  const red = Number.parseInt(normalized.slice(1, 3), 16);
+  const green = Number.parseInt(normalized.slice(3, 5), 16);
+  const blue = Number.parseInt(normalized.slice(5, 7), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 function setFrameIndex(index) {

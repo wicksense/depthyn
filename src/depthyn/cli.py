@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     replay_parser = subparsers.add_parser(
         "replay",
-        help="Run the baseline replay pipeline on converted LiDAR CSV frames.",
+        help="Run the replay pipeline on converted LiDAR CSV frames.",
     )
     replay_parser.add_argument(
         "input_dir",
@@ -169,6 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1200,
         help="Maximum downsampled points per frame to embed for viewer playback.",
+    )
+    replay_parser.add_argument(
+        "--zone-config",
+        type=Path,
+        default=None,
+        help="Optional JSON file defining XY zones for scene-rule evaluation.",
     )
     _add_mmdet3d_options(replay_parser)
 
@@ -229,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1200,
         help="Maximum downsampled points per frame to embed for viewer playback.",
+    )
+    compare_parser.add_argument(
+        "--zone-config",
+        type=Path,
+        default=None,
+        help="Optional JSON file defining XY zones for scene-rule evaluation.",
     )
     compare_parser.add_argument(
         "--pointpillars-config",
@@ -301,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output,
             mode=args.mode,
+            zone_config=args.zone_config,
             max_frames=args.max_frames,
             preview_point_limit=args.preview_points,
             detector=_build_detector_config(
@@ -326,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output_dir / "placeholder.json",
             mode=args.mode,
+            zone_config=args.zone_config,
             max_frames=args.max_frames,
             preview_point_limit=args.preview_points,
             voxel_size_m=args.voxel_size,

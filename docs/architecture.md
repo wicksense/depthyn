@@ -1,99 +1,127 @@
 # Depthyn Architecture
 
-Depthyn starts with one shared runtime path for replay and live sensing.
+Depthyn is organized as a perception platform, not as a model-zoo repo.
 
-## Runtime Flow
+## Runtime Stack
 
 ```text
-source -> frame -> pose mode -> preprocessing -> detections -> tracking -> scene intelligence
+source
+  -> frame contract
+  -> preprocessing
+  -> detector backend
+  -> tracking
+  -> scene state
+  -> rules
+  -> replay/API/UI
 ```
 
-## Source Layer
+That split matters because the product value is not only "detect objects." It
+is the full loop of ingest, tracking, scene awareness, replay, and operator
+logic.
 
-V1 source support:
-- converted LiDAR CSV frame replay
+## Layered View
 
-Planned next:
-- live Ouster UDP ingest
-- `pcap` replay
-- `osf` replay
+```text
+Depthyn platform
+  |
+  +-- source adapters
+  |     live UDP / pcap / osf / converted replay
+  |
+  +-- scene pipeline
+  |     preprocess -> detect -> track -> scene state
+  |
+  +-- scene intelligence
+  |     zones -> counts -> dwell -> alerts
+  |
+  +-- delivery
+        replay bundle -> API -> browser UI
+```
 
-Each source should normalize into the same internal frame object so the
-downstream perception stack does not care whether points came from a file or a
-live sensor.
+## Source Contract
 
-## Pose Modes
+Current:
+- converted LiDAR CSV replay
 
-- `mobile`: points are treated as sensor-frame or time-varying data, so the
-  baseline runs direct clustering without a persistent background model
-- `stationary`: the system warms up a background occupancy map and suppresses
-  stable cells to emphasize movers
+Next:
+- live Ouster UDP
+- `pcap`
+- `osf`
 
-## Perception Baseline
+All sources should normalize into the same internal frame object so the
+downstream pipeline does not care where the points came from.
 
-The current baseline is deliberately simple:
+## Operating Modes
+
+- `mobile`
+  Use direct clustering/tracking on moving or pose-varying captures.
+- `stationary`
+  Warm a background map and suppress stable cells so scene rules focus on
+  movers.
+
+## Scene Pipeline
+
+The current built-in baseline does this:
 - range and height filtering
-- voxel downsampling while loading
+- voxel downsampling during load
+- optional stationary-background suppression
 - XY occupancy clustering
-- 3D box estimates from clustered points
-- nearest-neighbor track association with a constant-velocity prediction
+- 3D box estimation
+- nearest-neighbor track association with constant-velocity prediction
 
-This is enough to validate ingest, scene state, summaries, and future UI/API
-contracts without blocking on ML training or model integration.
+Each frame now emits `scene_state`, which is the beginning of the product-facing
+contract that future APIs and UIs will consume.
 
-## Detector Interface
+## Scene Intelligence
 
-Replay now routes detections through a detector abstraction:
-- `baseline`: built-in clustering detector using foreground occupancy clusters
-- `centerpoint`: optional MMDetection3D-backed detector
-- `dsvt`: optional MMDetection3D-backed detector
-- `pointpillars`: optional MMDetection3D-backed detector
+Depthyn now includes a first rule layer for axis-aligned XY zones:
+- zone occupancy
+- `entered` events
+- `dwell` events
+- `exited` events
 
-The key design point is that tracking, replay summaries, and the viewer do not
-care which detector produced the boxes. That lets us compare a no-ML baseline
-against learned 3D detectors without changing the rest of the stack.
+These rules sit on top of tracks, which is the same product direction we want
+for counts, tripwires, dwell analytics, and alerts.
 
-## MMDetection3D Adapter
+## Detector Backends
 
-The ML adapter is intentionally out-of-process:
-- Depthyn serializes the current frame to a temp JSON payload
-- an external Python executable in an MMDetection3D environment runs
-  `tools/mmdet3d_runner.py`
-- the runner loads the model, performs inference, and writes normalized JSON
-  detections back to Depthyn
+Detector backends are replaceable:
+- `baseline`
+- optional `centerpoint`
+- optional `dsvt`
+- optional `pointpillars`
 
-Why use an out-of-process adapter:
-- the main Depthyn environment is currently dependency-light
-- modern 3D detectors need `torch`, `numpy`, and the MMDetection3D stack
-- it keeps the replay and viewer tooling usable even before the ML environment
-  is installed
+The important boundary is:
 
-## Comparison Flow
+```text
+detector backend -> normalized detections -> tracks -> scene state
+```
 
-The `compare` command runs multiple detector backends over the same replay input
-and writes:
-- one replay summary per detector
-- one `comparison.json` report with status and key metrics
+That keeps the rest of the platform stable even if we swap model frameworks.
 
-If an optional ML backend is not configured, comparison records that backend as
-an error instead of aborting the whole run.
+## Optional ML Adapter
 
-## Recorded Replay Viewer
+The current ML path is intentionally isolated behind an out-of-process adapter.
+That keeps the main Depthyn environment dependency-light while we decide what
+the long-term ML backend should be.
 
-Depthyn now includes a lightweight browser viewer for replay bundles:
+The repo should not be thought of as "an MMDetection3D project." MMDetection3D
+is only one possible detector host behind the adapter boundary.
+
+## Replay Viewer
+
+The browser replay viewer currently supports:
 - top-down point preview
+- zone overlays
 - detection boxes
 - active track overlays
 - short track trails
-- playback controls and frame scrubbing
+- playback controls
+- per-frame zone status
 
-The viewer is intentionally simple and dependency-light so we can inspect real
-data now, before the larger API and operator UI arrive.
+## Near-Term Roadmap
 
-## Next Layers
-
-- native ML environment bootstrap so CenterPoint and DSVT can run locally
-- zone rules and alerts
-- replay timeline and event storage
-- REST/WebSocket API
-- browser UI with 2D and 3D views
+- add Ouster SDK-backed live and recorded source adapters
+- promote scene-state bundles into a real API surface
+- add event storage and replay search
+- add richer rule types beyond rectangular zones
+- evaluate the first production ML backend behind the detector interface
