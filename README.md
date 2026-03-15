@@ -6,7 +6,7 @@ Depthyn is an open source LiDAR perception platform for two workflows:
 - live sensor operation
 - recorded replay and analysis
 
-The repo is now organized around the product architecture, not around any one
+The repo is organized around the product architecture, not around any one
 ML framework. Detection backends are pluggable. Replay, tracking, zones,
 alerts, scene state, and visualization are the stable core.
 
@@ -14,7 +14,7 @@ alerts, scene state, and visualization are the stable core.
 
 ```text
 LiDAR source
-  -> input adapter
+  -> input adapter (CSV, pcap, live UDP)
   -> unified frame contract
   -> preprocessing
   -> detector backend
@@ -23,39 +23,48 @@ LiDAR source
   -> replay bundle / API / UI
 ```
 
-Current source path:
-- converted CSV replay from `lidar-rpi-gps-pipeline`
-
-Planned source paths:
-- live Ouster UDP
-- `pcap` replay
-- `osf` replay
+Source adapters:
+- **Converted CSV** — replay from `lidar-rpi-gps-pipeline` exports
+- **Ouster pcap** — replay raw Ouster sensor captures via `ouster-sdk`
+- Planned: live Ouster UDP, OSF replay
 
 Detector backends can change without rewriting the rest of the stack:
 
 ```text
 preprocessed frame
   -> baseline clustering detector
-  -> optional ML detector backend
+  -> optional ML detector backend (ONNX CenterPoint, etc.)
   -> normalized detections
   -> tracks, zones, alerts, viewer
 ```
 
 ## Current Capabilities
 
-- replay converted frame CSVs from `lidar-rpi-gps-pipeline`
-- support `mobile` and `stationary` processing modes
-- downsample and filter LiDAR frames
-- run a non-ML baseline using clustering + tracking
-- emit product-facing scene state per frame
-- evaluate XY zone rules with enter, dwell, and exit events
-- write replay bundles for downstream API/UI work
-- serve a browser replay viewer for recorded sessions
-- compare the baseline against optional ML detector backends
+- Replay converted CSV frames or raw Ouster pcap captures
+- Auto-detect source type (CSV vs pcap) from input directory
+- Support `mobile` and `stationary` processing modes
+- Downsample and filter LiDAR frames
+- Run a non-ML baseline using clustering + tracking
+- Run ONNX CenterPoint inference with GPU acceleration (car, truck, bus, pedestrian, bicycle)
+- Emit product-facing scene state per frame
+- Evaluate XY zone rules with enter, dwell, and exit events
+- Write replay bundles for downstream API/UI work
+- Serve 3D and 2D browser viewers for recorded sessions
+- Compare the baseline against optional ML detector backends
 
 ## Quick Start
 
-Replay sample converted data:
+### Replay from raw Ouster pcap
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli replay \
+  SampleData/26 \
+  --detector centerpoint-onnx \
+  --output artifacts/pcap-centerpoint.json \
+  --max-frames 20
+```
+
+### Replay from converted CSV
 
 ```bash
 PYTHONPATH=src python3 -m depthyn.cli replay \
@@ -65,7 +74,16 @@ PYTHONPATH=src python3 -m depthyn.cli replay \
   --max-frames 20
 ```
 
-Replay with a sample zone config:
+### View results in 3D
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
+  --summary artifacts/pcap-centerpoint.json
+```
+
+Then open the printed 3D viewer URL in a browser.
+
+### Replay with zone rules
 
 ```bash
 PYTHONPATH=src python3 -m depthyn.cli replay \
@@ -76,24 +94,68 @@ PYTHONPATH=src python3 -m depthyn.cli replay \
   --zone-config examples/zones/sample-yard.json
 ```
 
-View the replay bundle in a browser:
+## ONNX CenterPoint
+
+Depthyn includes an in-process ONNX CenterPoint detector using Autoware v2
+PointPillars models. No MMDetection3D installation required.
+
+Download the models:
 
 ```bash
-PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
-  --summary artifacts/sampledata-26-zones.json
+python3 tools/download_models.py
 ```
 
-Then open the printed URL.
+Run with CenterPoint:
 
-## Stage 1 ML Replay Workflow
+```bash
+PYTHONPATH=src python3 -m depthyn.cli replay \
+  SampleData/26 \
+  --detector centerpoint-onnx \
+  --output artifacts/centerpoint-results.json \
+  --max-frames 30
+```
 
-Depthyn now supports a model-host-agnostic Stage 1 workflow for recorded-data ML
-evaluation:
+Classes detected: car, truck, bus, pedestrian, bicycle.
 
-1. export filtered replay frames in ML-friendly `XYZI` binary format
-2. run any external detector you want against those exported frames
-3. import the normalized detections back into Depthyn
-4. compare them against the built-in baseline on the same replay
+Requirements: `numpy`, `onnxruntime-gpu` (or `onnxruntime` for CPU).
+
+## 3D Viewer
+
+WebGL-based 3D point cloud viewer built with Three.js:
+
+- Height-colored point cloud rendering
+- Wireframe bounding boxes with per-class colors and heading rotation
+- Floating labels with class name and confidence score
+- Track trails showing movement history
+- Orbit/pan/zoom controls with ground grid
+- Frame playback with slider, speed control, keyboard shortcuts (Space, Arrow keys)
+- Dark theme UI
+
+The viewer loads the same replay JSON produced by the `replay` command.
+
+## Ouster Pcap Source
+
+Read raw Ouster pcap captures directly without CSV conversion:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli replay \
+  SampleData/26 \
+  --detector baseline \
+  --max-frames 10
+```
+
+Source type is auto-detected from file extensions. Override with `--source-type pcap` or `--source-type csv`.
+
+Requirements: `ouster-sdk`, `numpy`.
+
+## ML Replay Workflow
+
+Depthyn supports a model-host-agnostic workflow for recorded-data ML evaluation:
+
+1. Export filtered replay frames in ML-friendly `XYZI` binary format
+2. Run any external detector against those exported frames
+3. Import the normalized detections back into Depthyn
+4. Compare them against the built-in baseline on the same replay
 
 Export a replay bundle for ML runners:
 
@@ -102,16 +164,6 @@ PYTHONPATH=src python3 -m depthyn.cli prepare-ml-replay \
   SampleData/output-26/converted_csv \
   --output-dir artifacts/ml-replay \
   --max-frames 20
-```
-
-Run replay using imported predictions:
-
-```bash
-PYTHONPATH=src python3 -m depthyn.cli replay \
-  SampleData/output-26/converted_csv \
-  --output artifacts/precomputed-summary.json \
-  --detector precomputed \
-  --precomputed-path /path/to/predictions
 ```
 
 Compare baseline vs imported ML detections:
@@ -141,47 +193,9 @@ Optional fields:
 - `point_count`
 - `cell_count`
 
-## Stage 1b CenterPoint Workflow
-
-Depthyn now also includes a batch MMDetection3D replay path so the first real
-learned-detector run can happen on recorded data without loading the model once
-per frame.
-
-Low-level flow:
-
-```bash
-PYTHONPATH=src python3 -m depthyn.cli run-mmdet3d-replay \
-  --manifest-json artifacts/ml-replay/manifest.json \
-  --output-json artifacts/centerpoint-predictions.json \
-  --model-name centerpoint \
-  --mmdet3d-python /path/to/mmdet3d-env/bin/python \
-  --mmdet3d-repo /path/to/mmdetection3d \
-  --ml-config /path/to/centerpoint.py \
-  --ml-checkpoint /path/to/centerpoint.pth
-```
-
-One-command export + infer + compare:
-
-```bash
-PYTHONPATH=src python3 -m depthyn.cli compare-mmdet3d-replay \
-  SampleData/output-26/converted_csv \
-  --output-dir artifacts/centerpoint-stage1 \
-  --model-name centerpoint \
-  --mmdet3d-python /path/to/mmdet3d-env/bin/python \
-  --mmdet3d-repo /path/to/mmdetection3d \
-  --ml-config /path/to/centerpoint.py \
-  --ml-checkpoint /path/to/centerpoint.pth
-```
-
-That command writes:
-- exported replay frames under `artifacts/centerpoint-stage1/ml-replay`
-- normalized predictions as JSON
-- baseline vs CenterPoint comparison outputs
-- replay summaries that can be viewed in the browser
-
 ## Replay Output
 
-Each frame summary now includes:
+Each frame summary includes:
 - preview points
 - detections
 - active tracks
@@ -201,33 +215,26 @@ That structure is intended to become the basis for future REST/WebSocket APIs.
 ## Detector Backends
 
 Built in:
-- `baseline`: clustering + tracking
+- `baseline`: clustering + tracking (no ML required)
+- `centerpoint-onnx`: ONNX CenterPoint with PointPillars voxelization (GPU or CPU)
 - `precomputed`: imported normalized detections from any external model runner
 
-Optional:
+Optional (require MMDetection3D):
 - `centerpoint`
 - `dsvt`
 - `pointpillars`
 
-Those ML options are currently adapter backends, not the foundation of the
-repo. Depthyn can compare them against the baseline, but the platform itself is
-designed so that tracking, zones, replay, and UI are not coupled to any single
-detector framework.
-
-Manual ML backend setup lives in [docs/mmdet3d_setup.md](/home/spriteadmin/Documents/LiDAR-Object-Detection/docs/mmdet3d_setup.md).
-That setup path was verified on this VM and includes the source-build details
-for `mmcv`, CUDA 11.8 toolkit layout, and compiler pinning that were needed to
-make the env reproducible here.
+Manual ML backend setup lives in [docs/mmdet3d_setup.md](docs/mmdet3d_setup.md).
 
 ## Repository Layout
 
-- `src/depthyn/source/`: replay and future live input adapters
+- `src/depthyn/source/`: input adapters (CSV, Ouster pcap)
 - `src/depthyn/perception/`: preprocessing and baseline perception
 - `src/depthyn/detectors/`: pluggable detector backends
 - `src/depthyn/tracking/`: track management
 - `src/depthyn/scene/`: scene-state contracts
 - `src/depthyn/rules/`: zone rules and event generation
-- `viewer/`: browser replay UI
+- `viewer/`: browser replay UI (3D and 2D viewers)
+- `tools/`: model download and utility scripts
 - `docs/`: architecture and setup notes
 - `tests/`: unit tests
-- `MEMORY.md`: persistent project memory
