@@ -13,3 +13,4 @@ SampleData/
 checkpoints/
 models/*.onnx
 models/**/*.onnx
+MEMORY.md
