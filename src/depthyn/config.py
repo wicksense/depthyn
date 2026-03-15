@@ -40,7 +40,7 @@ class ReplayConfig:
     source_type: str = "auto"
     zone_config: Path | None = None
     max_frames: int | None = None
-    preview_point_limit: int = 1200
+    preview_point_limit: int = 6000
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     voxel_size_m: float = 0.3
     min_range_m: float = 1.0

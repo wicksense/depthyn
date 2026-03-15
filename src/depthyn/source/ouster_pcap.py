@@ -39,6 +39,12 @@ def find_metadata_json(pcap_path: Path) -> Path:
     if "_chunk" in stem:
         base_stem = stem[: stem.index("_chunk")]
 
+    # Strip duplicate suffix (e.g. "name (1)" -> "name")
+    import re
+    clean_stem = re.sub(r"\s*\(\d+\)$", "", stem)
+    if clean_stem != stem:
+        base_stem = clean_stem
+
     candidates = [
         parent / f"{stem}_0.json",
         parent / f"{base_stem}_0.json",
@@ -49,6 +55,28 @@ def find_metadata_json(pcap_path: Path) -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
+
+    # Glob for <stem>_<serial>.json (e.g. 9_3__12_14_21_122322001035.json)
+    glob_matches = sorted(parent.glob(f"{stem}_*.json"))
+    if glob_matches:
+        return glob_matches[0]
+    if base_stem != stem:
+        glob_matches = sorted(parent.glob(f"{base_stem}_*.json"))
+        if glob_matches:
+            return glob_matches[0]
+
+    # Check inside <stem>_configuration/ directory
+    config_dir = parent / f"{stem}_configuration"
+    if config_dir.is_dir():
+        json_files = sorted(config_dir.glob("*.json"))
+        if json_files:
+            return json_files[0]
+    if base_stem != stem:
+        config_dir = parent / f"{base_stem}_configuration"
+        if config_dir.is_dir():
+            json_files = sorted(config_dir.glob("*.json"))
+            if json_files:
+                return json_files[0]
     raise FileNotFoundError(
         f"Cannot find Ouster metadata JSON for {pcap_path}. "
         f"Tried: {[str(c) for c in candidates]}"
@@ -88,7 +116,10 @@ def iter_ouster_pcap_frames(
         if max_frames is not None and frame_count >= max_frames:
             break
 
-        metadata_path = find_metadata_json(pcap_path)
+        try:
+            metadata_path = find_metadata_json(pcap_path)
+        except FileNotFoundError:
+            continue
         source = open_source(str(pcap_path), meta=[str(metadata_path)])
         sensor_info = source.sensor_info[0]
         xyz_lut = XYZLut(sensor_info)

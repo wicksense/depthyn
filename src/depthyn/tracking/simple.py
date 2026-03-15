@@ -46,6 +46,8 @@ class SimpleTracker:
                 point_count=detection.point_count,
                 first_seen_ns=timestamp_ns,
                 last_seen_ns=timestamp_ns,
+                label=detection.label,
+                score=detection.score,
             )
             self._active_tracks[track.track_id] = track
             self._next_track_id += 1
@@ -99,6 +101,8 @@ class SimpleTracker:
         track.bbox_min = detection.bbox_min
         track.bbox_max = detection.bbox_max
         track.point_count = detection.point_count
+        track.label = detection.label
+        track.score = detection.score
         track.last_seen_ns = timestamp_ns
         track.hits += 1
         track.misses = 0
