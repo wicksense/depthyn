@@ -52,6 +52,8 @@ class Track:
     point_count: int
     first_seen_ns: int
     last_seen_ns: int
+    label: str = "object"
+    score: float | None = None
     hits: int = 1
     misses: int = 0
     age_frames: int = 1
@@ -68,6 +70,8 @@ class Track:
     def to_dict(self) -> dict[str, object]:
         return {
             "track_id": self.track_id,
+            "label": self.label,
+            "score": None if self.score is None else round(self.score, 4),
             "centroid": list(self.centroid),
             "velocity_mps": list(self.velocity),
             "bbox_min": list(self.bbox_min),

@@ -28,7 +28,7 @@ class SceneObject:
         return cls(
             object_id=f"track-{track.track_id}",
             source_type="track",
-            label="object",
+            label=track.label,
             centroid=track.centroid,
             bbox_min=track.bbox_min,
             bbox_max=track.bbox_max,
