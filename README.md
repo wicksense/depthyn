@@ -94,6 +94,30 @@ PYTHONPATH=src python3 -m depthyn.cli replay \
   --zone-config examples/zones/sample-yard.json
 ```
 
+### Evaluate against Gemini/Ouster logs
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli evaluate \
+  "SampleData/Scooter LiDAR Experiment 1/Scooter LiDAR Experiment 1" \
+  --gt-log "SampleData/Scooter LiDAR Experiment 1/Scooter LiDAR Experiment 1/object_list+occupations+aggregation_timeseries.log" \
+  --detector centerpoint-onnx \
+  --mode stationary \
+  --output artifacts/evaluation-scooter.json
+```
+
+For stationary scenes, you can also force ML inference to run on
+foreground-only points after background suppression:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli evaluate \
+  "SampleData/Scooter LiDAR Experiment 1/Scooter LiDAR Experiment 1" \
+  --gt-log "SampleData/Scooter LiDAR Experiment 1/Scooter LiDAR Experiment 1/object_list+occupations+aggregation_timeseries.log" \
+  --detector centerpoint-onnx \
+  --mode stationary \
+  --detector-on-foreground \
+  --output artifacts/evaluation-scooter-foreground.json
+```
+
 ## ONNX CenterPoint
 
 Depthyn includes an in-process ONNX CenterPoint detector using Autoware v2

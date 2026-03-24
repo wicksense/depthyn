@@ -5,7 +5,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from depthyn.detectors.base import DetectorResult
 from depthyn.config import ReplayConfig
 from depthyn.pipeline import run_replay
 
@@ -90,6 +92,97 @@ class PipelineTests(unittest.TestCase):
                 summary["frame_summaries"][0]["detections"][0]["source"], "baseline"
             )
 
+    def test_stationary_mode_can_run_full_detector_on_foreground(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frame1 = root / "frame_0001.csv"
+            frame2 = root / "frame_0002.csv"
+            self._write_frame(
+                frame1,
+                [
+                    (1_000_000_000, 0.0, 0.0, 0.5),
+                ],
+            )
+            self._write_frame(
+                frame2,
+                [
+                    (2_000_000_000, 0.0, 0.0, 0.5),
+                    (2_000_000_010, 5.0, 5.0, 0.6),
+                ],
+            )
+
+            fake_detector = _RecordingDetector(input_mode="full")
+
+            with patch("depthyn.pipeline.create_detector", return_value=fake_detector):
+                summary = run_replay(
+                    ReplayConfig(
+                        input_dir=root,
+                        output_json=root / "summary.json",
+                        mode="stationary",
+                        detector_on_foreground=True,
+                        voxel_size_m=0.0,
+                        min_range_m=0.0,
+                        max_range_m=100.0,
+                        z_min_m=-10.0,
+                        z_max_m=10.0,
+                        cluster_cell_size_m=1.0,
+                        background_warmup_frames=1,
+                        background_min_hits=1,
+                        background_fade_time_s=0.0,
+                    )
+                )
+
+            self.assertEqual(fake_detector.input_sizes, [1])
+            self.assertEqual(
+                summary["frame_summaries"][1]["detector_input_points"],
+                1,
+            )
+
+    def test_stationary_mode_keeps_full_scene_for_full_detector_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            frame1 = root / "frame_0001.csv"
+            frame2 = root / "frame_0002.csv"
+            self._write_frame(
+                frame1,
+                [
+                    (1_000_000_000, 0.0, 0.0, 0.5),
+                ],
+            )
+            self._write_frame(
+                frame2,
+                [
+                    (2_000_000_000, 0.0, 0.0, 0.5),
+                    (2_000_000_010, 5.0, 5.0, 0.6),
+                ],
+            )
+
+            fake_detector = _RecordingDetector(input_mode="full")
+
+            with patch("depthyn.pipeline.create_detector", return_value=fake_detector):
+                summary = run_replay(
+                    ReplayConfig(
+                        input_dir=root,
+                        output_json=root / "summary.json",
+                        mode="stationary",
+                        voxel_size_m=0.0,
+                        min_range_m=0.0,
+                        max_range_m=100.0,
+                        z_min_m=-10.0,
+                        z_max_m=10.0,
+                        cluster_cell_size_m=1.0,
+                        background_warmup_frames=1,
+                        background_min_hits=1,
+                        background_fade_time_s=0.0,
+                    )
+                )
+
+            self.assertEqual(fake_detector.input_sizes, [1, 2])
+            self.assertEqual(
+                summary["frame_summaries"][1]["detector_input_points"],
+                2,
+            )
+
     def _write_frame(
         self, path: Path, rows: list[tuple[int, float, float, float]]
     ) -> None:
@@ -97,6 +190,21 @@ class PipelineTests(unittest.TestCase):
             writer = csv.writer(handle)
             writer.writerow(["TIMESTAMP (ns)", "X1 (m)", "Y1 (m)", "Z1 (m)"])
             writer.writerows(rows)
+
+class _RecordingDetector:
+    name = "recording"
+
+    def __init__(self, input_mode: str) -> None:
+        self.input_mode = input_mode
+        self.input_sizes: list[int] = []
+
+    def detect(self, frame, points):
+        self.input_sizes.append(len(points))
+        return DetectorResult(
+            detections=[],
+            input_point_count=len(points),
+            metadata={"input_size": len(points)},
+        )
 
 
 if __name__ == "__main__":

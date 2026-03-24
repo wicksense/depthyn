@@ -233,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay_parser.add_argument(
         "--cluster-cell-size",
         type=float,
-        default=0.75,
+        default=0.5,
         help="XY cell size in meters used for occupancy clustering.",
     )
     replay_parser.add_argument(
@@ -259,6 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional JSON file defining XY zones for scene-rule evaluation.",
+    )
+    replay_parser.add_argument(
+        "--detector-on-foreground",
+        action="store_true",
+        help="In stationary mode, run the detector on foreground-only points even if it normally expects the full scene.",
     )
     replay_parser.add_argument(
         "--precomputed-path",
@@ -317,7 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument(
         "--cluster-cell-size",
         type=float,
-        default=0.75,
+        default=0.5,
         help="XY cell size in meters used for occupancy clustering.",
     )
     compare_parser.add_argument(
@@ -337,6 +342,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional JSON file defining XY zones for scene-rule evaluation.",
+    )
+    compare_parser.add_argument(
+        "--detector-on-foreground",
+        action="store_true",
+        help="In stationary mode, run all detectors on foreground-only points even if they normally expect the full scene.",
     )
     compare_parser.add_argument(
         "--precomputed-path",
@@ -402,6 +412,150 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8765,
         help="Port for the local HTTP server.",
+    )
+
+    # ── Evaluate ──────────────────────────────────────────────────
+    eval_parser = subparsers.add_parser(
+        "evaluate",
+        help="Evaluate detector against Ouster ground truth classification logs.",
+    )
+    eval_parser.add_argument(
+        "input_dir",
+        type=Path,
+        help="Directory containing Ouster pcap files.",
+    )
+    eval_parser.add_argument(
+        "--gt-log",
+        type=Path,
+        required=True,
+        help="Path to Ouster classification log file (JSON-per-line).",
+    )
+    eval_parser.add_argument(
+        "--source-type",
+        choices=("auto", "csv", "pcap"),
+        default="pcap",
+        help="Input source type (default: pcap).",
+    )
+    eval_parser.add_argument(
+        "--mode",
+        choices=("mobile", "stationary"),
+        default="stationary",
+        help="Evaluation mode. Stationary enables background modeling before detection.",
+    )
+    eval_parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("artifacts/evaluation.json"),
+        help="Output evaluation report JSON.",
+    )
+    eval_parser.add_argument(
+        "--detector",
+        choices=("baseline", "centerpoint-onnx"),
+        default="centerpoint-onnx",
+        help="Detector to evaluate.",
+    )
+    eval_parser.add_argument(
+        "--ml-score-threshold",
+        type=float,
+        default=0.25,
+        help="Minimum detection confidence score.",
+    )
+    eval_parser.add_argument(
+        "--match-distance",
+        type=float,
+        default=3.0,
+        help="Maximum XY distance for detection-to-GT matching (meters).",
+    )
+    eval_parser.add_argument(
+        "--min-gt-distance",
+        type=float,
+        default=2.0,
+        help="Exclude GT objects closer than this (likely self-returns).",
+    )
+    eval_parser.add_argument(
+        "--voxel-size",
+        type=float,
+        default=0.3,
+        help="Voxel downsampling resolution.",
+    )
+    eval_parser.add_argument(
+        "--cluster-cell-size",
+        type=float,
+        default=0.5,
+        help="XY cell size in meters used for background modeling and clustering.",
+    )
+    eval_parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Maximum frames to process.",
+    )
+    eval_parser.add_argument(
+        "--detector-on-foreground",
+        action="store_true",
+        help="Run the detector on foreground-only points after stationary background suppression.",
+    )
+    eval_parser.add_argument(
+        "--no-class-match",
+        action="store_true",
+        help="Count spatial matches as TP regardless of class.",
+    )
+
+    debug_frame_parser = subparsers.add_parser(
+        "debug-frame",
+        help="Export a single viewer-friendly debug frame with raw points, detector output, and Gemini GT objects.",
+    )
+    debug_frame_parser.add_argument(
+        "input_dir",
+        type=Path,
+        help="Directory containing Ouster pcap files.",
+    )
+    debug_frame_parser.add_argument(
+        "--gt-log",
+        type=Path,
+        required=True,
+        help="Path to Ouster classification log file (JSON-per-line).",
+    )
+    debug_frame_parser.add_argument(
+        "--frame-count",
+        type=int,
+        required=True,
+        help="Gemini/Ouster frame_count to export.",
+    )
+    debug_frame_parser.add_argument(
+        "--source-type",
+        choices=("auto", "csv", "pcap"),
+        default="pcap",
+        help="Input source type (default: pcap).",
+    )
+    debug_frame_parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("artifacts/debug-frame.json"),
+        help="Output debug bundle JSON.",
+    )
+    debug_frame_parser.add_argument(
+        "--detector",
+        choices=("baseline", "centerpoint-onnx"),
+        default="centerpoint-onnx",
+        help="Detector to run on the selected frame.",
+    )
+    debug_frame_parser.add_argument(
+        "--ml-score-threshold",
+        type=float,
+        default=0.25,
+        help="Minimum detection confidence score.",
+    )
+    debug_frame_parser.add_argument(
+        "--voxel-size",
+        type=float,
+        default=0.3,
+        help="Voxel downsampling resolution.",
+    )
+    debug_frame_parser.add_argument(
+        "--detector-on-foreground",
+        action="store_true",
+        help="Run the detector on foreground-only points. Currently intended for future stationary debug parity work.",
     )
 
     export_parser = subparsers.add_parser(
@@ -508,6 +662,7 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output,
             mode=args.mode,
+            detector_on_foreground=args.detector_on_foreground,
             source_type=args.source_type,
             zone_config=args.zone_config,
             max_frames=args.max_frames,
@@ -536,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output_dir / "placeholder.json",
             mode=args.mode,
+            detector_on_foreground=args.detector_on_foreground,
             source_type=args.source_type,
             zone_config=args.zone_config,
             max_frames=args.max_frames,
@@ -553,6 +709,59 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve-viewer":
         serve_viewer(args.summary, args.host, args.port)
+        return 0
+    if args.command == "evaluate":
+        from depthyn.evaluation.runner import run_evaluation
+
+        eval_config = ReplayConfig(
+            input_dir=args.input_dir,
+            output_json=args.output,
+            mode=args.mode,
+            detector_on_foreground=args.detector_on_foreground,
+            source_type=args.source_type,
+            max_frames=args.max_frames,
+            detector=_build_detector_config(
+                args.detector,
+                None, None, None, None, None,
+                args.ml_score_threshold,
+                "cpu",
+            ),
+            voxel_size_m=args.voxel_size,
+            cluster_cell_size_m=args.cluster_cell_size,
+        )
+        report = run_evaluation(
+            eval_config,
+            args.gt_log,
+            max_distance_m=args.match_distance,
+            min_gt_distance_m=args.min_gt_distance,
+            class_match=not args.no_class_match,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.output, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"\nWrote evaluation report to {args.output}")
+        print(json.dumps(report["metrics"], indent=2))
+        return 0
+    if args.command == "debug-frame":
+        from depthyn.evaluation.debug_export import export_debug_frame
+
+        bundle = export_debug_frame(
+            input_dir=args.input_dir,
+            gt_log_path=args.gt_log,
+            output_path=args.output,
+            frame_count=args.frame_count,
+            detector=_build_detector_config(
+                args.detector,
+                None, None, None, None, None,
+                args.ml_score_threshold,
+                "cpu",
+            ),
+            source_type=args.source_type,
+            voxel_size_m=args.voxel_size,
+            detector_on_foreground=args.detector_on_foreground,
+        )
+        print(f"Wrote debug frame bundle to {args.output}")
+        print(json.dumps(bundle["metrics"], indent=2))
         return 0
     if args.command == "prepare-ml-replay":
         manifest = export_ml_replay_bundle(

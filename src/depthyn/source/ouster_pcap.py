@@ -7,6 +7,7 @@ Frame objects compatible with the Depthyn replay pipeline.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -26,10 +27,8 @@ def discover_ouster_pcap_files(input_dir: Path) -> list[Path]:
 def find_metadata_json(pcap_path: Path) -> Path:
     """Locate the Ouster sensor metadata JSON for a pcap file.
 
-    Tries several naming conventions:
-    - ``<stem>_0.json`` (default from the capture pipeline)
-    - ``<stem>.json``
-    - ``metadata.json`` in the same directory
+    Tries several naming conventions and fallbacks including glob
+    patterns and configuration directories.
     """
     parent = pcap_path.parent
     stem = pcap_path.stem
@@ -39,8 +38,7 @@ def find_metadata_json(pcap_path: Path) -> Path:
     if "_chunk" in stem:
         base_stem = stem[: stem.index("_chunk")]
 
-    # Strip duplicate suffix (e.g. "name (1)" -> "name")
-    import re
+    # Strip duplicate suffix like " (1)" from copied files
     clean_stem = re.sub(r"\s*\(\d+\)$", "", stem)
     if clean_stem != stem:
         base_stem = clean_stem
@@ -56,27 +54,20 @@ def find_metadata_json(pcap_path: Path) -> Path:
         if candidate.is_file():
             return candidate
 
-    # Glob for <stem>_<serial>.json (e.g. 9_3__12_14_21_122322001035.json)
-    glob_matches = sorted(parent.glob(f"{stem}_*.json"))
-    if glob_matches:
-        return glob_matches[0]
-    if base_stem != stem:
-        glob_matches = sorted(parent.glob(f"{base_stem}_*.json"))
+    # Glob for <stem>_<serial>.json
+    for prefix in (stem, base_stem):
+        glob_matches = sorted(parent.glob(f"{prefix}_*.json"))
         if glob_matches:
             return glob_matches[0]
 
     # Check inside <stem>_configuration/ directory
-    config_dir = parent / f"{stem}_configuration"
-    if config_dir.is_dir():
-        json_files = sorted(config_dir.glob("*.json"))
-        if json_files:
-            return json_files[0]
-    if base_stem != stem:
-        config_dir = parent / f"{base_stem}_configuration"
+    for prefix in (stem, base_stem):
+        config_dir = parent / f"{prefix}_configuration"
         if config_dir.is_dir():
             json_files = sorted(config_dir.glob("*.json"))
             if json_files:
                 return json_files[0]
+
     raise FileNotFoundError(
         f"Cannot find Ouster metadata JSON for {pcap_path}. "
         f"Tried: {[str(c) for c in candidates]}"
@@ -183,6 +174,7 @@ def iter_ouster_pcap_frames(
                 else:
                     timestamp_ns = 0
 
+                sensor_fid = scan.frame_id if hasattr(scan, "frame_id") else None
                 frame_id = f"pcap_{pcap_path.stem}_f{frame_count:06d}"
 
                 yield Frame(
@@ -190,6 +182,7 @@ def iter_ouster_pcap_frames(
                     timestamp_ns=timestamp_ns,
                     points=points,
                     source_path=pcap_path,
+                    sensor_frame_id=sensor_fid,
                 )
                 frame_count += 1
 
