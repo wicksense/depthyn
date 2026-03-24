@@ -251,6 +251,25 @@ canvas { display: block; }
   flex-shrink: 0;
 }
 
+#overlay-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.toggle-row input {
+  accent-color: var(--accent);
+}
+
 /* ── 3D label sprites ────────────────────────────────── */
 
 .label-3d {
