@@ -6,6 +6,7 @@ from pathlib import Path
 
 from depthyn.config import ReplayConfig
 from depthyn.detectors.factory import create_detector
+from depthyn.pose import discover_gps_csv, load_gps_pose_provider, transform_detection, transform_points
 from depthyn.perception.background import BackgroundModel
 from depthyn.rules import ZoneMonitor, load_zone_definitions
 from depthyn.scene import build_scene_state
@@ -101,6 +102,7 @@ def _detector_uses_foreground(config: ReplayConfig, detector) -> bool:
 def run_replay(config: ReplayConfig) -> dict[str, object]:
     detector = create_detector(config)
     detector_uses_foreground = _detector_uses_foreground(config, detector)
+    pose_provider = _load_pose_provider(config)
     zones = (
         load_zone_definitions(config.zone_config)
         if config.zone_config is not None
@@ -142,6 +144,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         total_points += len(frame.points)
         stage = "tracking"
         working_points = frame.points
+        frame_pose = pose_provider.pose_at(frame.timestamp_ns) if pose_provider else None
 
         if background_model is not None and frame_index < config.background_warmup_frames:
             background_model.observe(frame.points, timestamp_ns=frame.timestamp_ns)
@@ -160,6 +163,11 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             )
             detector_result = detector.detect(frame, detector_points)
             detections = detector_result.detections
+            if frame_pose is not None:
+                detections = [
+                    transform_detection(detection, frame_pose)
+                    for detection in detections
+                ]
             detector_metadata = detector_result.metadata
             active_tracks = tracker.update(detections, frame.timestamp_ns)
 
@@ -192,8 +200,11 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
 
         total_foreground_points += len(working_points)
         max_active_tracks = max(max_active_tracks, len(active_tracks))
+        preview_source = working_points if working_points else frame.points
+        if frame_pose is not None:
+            preview_source = transform_points(preview_source, frame_pose)
         preview_points = _sample_preview_points(
-            working_points if working_points else frame.points,
+            preview_source,
             config.preview_point_limit,
         )
         active_track_payload = [track.to_dict() for track in active_tracks]
@@ -228,6 +239,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "frame_id": frame.frame_id,
                 "timestamp_ns": frame.timestamp_ns,
                 "source_path": str(frame.source_path),
+                "frame_pose": None if frame_pose is None else frame_pose.to_dict(),
                 "stage": stage,
                 "points_after_filtering": len(frame.points),
                 "foreground_points": len(working_points),
@@ -247,6 +259,10 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     summary: dict[str, object] = {
         "project": "Depthyn",
         "pipeline": "scene_replay",
+        "reference_frame": "world" if pose_provider is not None else "sensor",
+        "world_alignment": (
+            None if pose_provider is None else pose_provider.metadata()
+        ),
         "scene_contract": {
             "version": "v1",
             "object_source": "tracked_objects",
@@ -282,6 +298,13 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         "track_summaries": [track.to_dict() for track in tracks],
     }
     return summary
+
+
+def _load_pose_provider(config: ReplayConfig):
+    if not config.world_align:
+        return None
+    gps_path = config.gps_path or discover_gps_csv(config.input_dir)
+    return load_gps_pose_provider(gps_path)
 
 
 def write_summary(summary: dict[str, object], output_path: Path) -> None:

@@ -50,6 +50,7 @@ preprocessed frame
 - Evaluate XY zone rules with enter, dwell, and exit events
 - Write replay bundles for downstream API/UI work
 - Serve 3D and 2D browser viewers for recorded sessions
+- World-align mobile replay using GPS pose interpolation
 - Compare the baseline against optional ML detector backends
 
 ## Quick Start
@@ -82,6 +83,36 @@ PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
 ```
 
 Then open the printed 3D viewer URL in a browser.
+
+### Mobile replay in a GPS-aligned world frame
+
+Use this for moving-vehicle sessions when the input directory contains one
+matching `raw_gps_*.csv` file or when you pass `--gps-path` explicitly:
+
+```bash
+source .miniforge3/etc/profile.d/conda.sh
+conda activate depthyn-mmdet3d
+PYTHONPATH=src python -m depthyn.cli replay \
+  artifacts/session-inputs/20260317_094022 \
+  --source-type pcap \
+  --detector centerpoint-onnx \
+  --mode mobile \
+  --world-align \
+  --preview-points 200 \
+  --output artifacts/3-17-20260317_094022-centerpoint-world.json
+```
+
+Then open it in the viewer:
+
+```bash
+PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
+  --summary artifacts/3-17-20260317_094022-centerpoint-world.json
+```
+
+Notes:
+- detector inference still runs in the sensor frame
+- preview points, detections, tracks, and the ego marker are then transformed into a GPS-anchored world frame
+- world replay currently uses GPS XY position and heading; raw GPS altitude is intentionally ignored to avoid noisy vertical jitter
 
 ### Replay with zone rules
 
@@ -151,6 +182,7 @@ WebGL-based 3D point cloud viewer built with Three.js:
 - Wireframe bounding boxes with per-class colors and heading rotation
 - Floating labels with class name and confidence score
 - Track trails showing movement history
+- Ego marker with forward arrow, plus moving GPS-aligned pose in world replay mode
 - Orbit/pan/zoom controls with ground grid
 - Frame playback with slider, speed control, keyboard shortcuts (Space, Arrow keys)
 - Dark theme UI

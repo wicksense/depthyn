@@ -37,6 +37,8 @@ class ReplayConfig:
     input_dir: Path
     output_json: Path
     mode: str = "mobile"
+    world_align: bool = False
+    gps_path: Path | None = None
     detector_on_foreground: bool = False
     source_type: str = "auto"
     zone_config: Path | None = None
@@ -64,6 +66,8 @@ class ReplayConfig:
         payload = asdict(self)
         payload["input_dir"] = str(self.input_dir)
         payload["output_json"] = str(self.output_json)
+        if self.gps_path is not None:
+            payload["gps_path"] = str(self.gps_path)
         if self.zone_config is not None:
             payload["zone_config"] = str(self.zone_config)
         payload["detector"] = self.detector.to_dict()

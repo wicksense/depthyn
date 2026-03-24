@@ -219,6 +219,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use stationary mode to enable background warmup and foreground suppression.",
     )
     replay_parser.add_argument(
+        "--world-align",
+        action="store_true",
+        help="Transform mobile replay outputs into a GPS-anchored world frame.",
+    )
+    replay_parser.add_argument(
+        "--gps-path",
+        type=Path,
+        default=None,
+        help="Optional GPS CSV path for world alignment. Defaults to auto-discovery in the input directory.",
+    )
+    replay_parser.add_argument(
         "--max-frames",
         type=int,
         default=None,
@@ -299,6 +310,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("mobile", "stationary"),
         default="mobile",
         help="Replay mode used for all detector backends in the comparison.",
+    )
+    compare_parser.add_argument(
+        "--world-align",
+        action="store_true",
+        help="Transform replay outputs into a GPS-anchored world frame.",
+    )
+    compare_parser.add_argument(
+        "--gps-path",
+        type=Path,
+        default=None,
+        help="Optional GPS CSV path for world alignment. Defaults to auto-discovery in the input directory.",
     )
     compare_parser.add_argument(
         "--max-frames",
@@ -662,6 +684,8 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output,
             mode=args.mode,
+            world_align=args.world_align,
+            gps_path=args.gps_path,
             detector_on_foreground=args.detector_on_foreground,
             source_type=args.source_type,
             zone_config=args.zone_config,
@@ -691,6 +715,8 @@ def main(argv: list[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_json=args.output_dir / "placeholder.json",
             mode=args.mode,
+            world_align=args.world_align,
+            gps_path=args.gps_path,
             detector_on_foreground=args.detector_on_foreground,
             source_type=args.source_type,
             zone_config=args.zone_config,

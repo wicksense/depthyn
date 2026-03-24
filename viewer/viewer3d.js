@@ -261,6 +261,18 @@ function buildEgoMarker() {
   };
 }
 
+function applyFramePose(frame) {
+  const pose = frame?.frame_pose;
+  if (!pose) {
+    egoGroup.position.set(0, 0, 0);
+    egoGroup.rotation.set(0, 0, 0);
+    return;
+  }
+  const [x, y, z] = pose.position_m || [0, 0, 0];
+  egoGroup.position.set(x, y, z);
+  egoGroup.rotation.set(0, 0, pose.heading_rad || 0);
+}
+
 // ─── 3D bounding boxes ──────────────────────────────────────────
 
 function buildBoxes(detections, activeTracks) {
@@ -549,13 +561,18 @@ function updateSidebar() {
 
   statusEl.textContent = `${bundle.frames_processed} frames · ${bundle.metrics.detector_name || "baseline"}`;
 
+  const referenceFrame = bundle.reference_frame || "sensor";
+  const frameAxes = referenceFrame === "world"
+    ? "+X east · +Y north"
+    : "+X forward · +Y left";
   const rows = [
     ["Frame", `${state.frameIndex + 1} / ${bundle.frame_summaries.length}`],
     ["Points", frame.points_after_filtering],
     ["Detections", frame.detection_count],
     ["Tracks", frame.active_tracks.length],
     ["Mode", bundle.config.mode],
-    ["Frame axes", "+X forward · +Y left"],
+    ["Reference", referenceFrame],
+    ["Frame axes", frameAxes],
   ];
   statsEl.innerHTML = rows.map(([k, v]) =>
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
@@ -648,6 +665,7 @@ function showFrame() {
   if (!state.bundle) return;
   const frame = state.bundle.frame_summaries[state.frameIndex];
 
+  applyFramePose(frame);
   buildPointCloud(frame.preview_points);
   buildBoxes(frame.detections, frame.active_tracks);
   buildTrails(state.bundle, state.frameIndex);
