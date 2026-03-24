@@ -107,6 +107,7 @@ createGroundGrid();
 // ─── Scene objects (rebuilt per frame) ───────────────────────────
 
 let pointCloud = null;
+let highlightPointCloud = null;
 let boxGroup = new THREE.Group();
 let trailGroup = new THREE.Group();
 let egoGroup = new THREE.Group();
@@ -140,16 +141,23 @@ const circleTexture = (() => {
 
 // ─── Point cloud ─────────────────────────────────────────────────
 
-function buildPointCloud(points) {
+function buildPointCloud(points, selectedVolume = null) {
   if (pointCloud) {
     scene.remove(pointCloud);
     pointCloud.geometry.dispose();
     pointCloud.material.dispose();
   }
+  if (highlightPointCloud) {
+    scene.remove(highlightPointCloud);
+    highlightPointCloud.geometry.dispose();
+    highlightPointCloud.material.dispose();
+    highlightPointCloud = null;
+  }
   if (!points || !points.length) return;
 
   const positions = new Float32Array(points.length * 3);
   const colors = new Float32Array(points.length * 3);
+  const highlightPoints = [];
 
   let zMin = Infinity, zMax = -Infinity;
   for (const p of points) {
@@ -161,9 +169,12 @@ function buildPointCloud(points) {
   // Add subtle jitter to break voxel grid pattern
   const jitter = 0.08;
   for (let i = 0; i < points.length; i++) {
-    positions[i * 3]     = points[i][0] + (Math.random() - 0.5) * jitter;
-    positions[i * 3 + 1] = points[i][1] + (Math.random() - 0.5) * jitter;
-    positions[i * 3 + 2] = points[i][2] + (Math.random() - 0.5) * jitter;
+    const px = points[i][0] + (Math.random() - 0.5) * jitter;
+    const py = points[i][1] + (Math.random() - 0.5) * jitter;
+    const pz = points[i][2] + (Math.random() - 0.5) * jitter;
+    positions[i * 3] = px;
+    positions[i * 3 + 1] = py;
+    positions[i * 3 + 2] = pz;
 
     const t = (points[i][2] - zMin) / zSpan;
     const r = 0.25 + t * 0.65;
@@ -172,6 +183,10 @@ function buildPointCloud(points) {
     colors[i * 3]     = r;
     colors[i * 3 + 1] = g;
     colors[i * 3 + 2] = b;
+
+    if (selectedVolume && pointInVolume(points[i], selectedVolume)) {
+      highlightPoints.push([px, py, pz]);
+    }
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -183,7 +198,7 @@ function buildPointCloud(points) {
     sizeAttenuation: true,
     vertexColors: true,
     transparent: true,
-    opacity: 0.85,
+    opacity: selectedVolume ? 0.18 : 0.85,
     depthWrite: false,
     map: circleTexture,
     alphaMap: circleTexture,
@@ -192,6 +207,36 @@ function buildPointCloud(points) {
 
   pointCloud = new THREE.Points(geometry, material);
   scene.add(pointCloud);
+
+  if (highlightPoints.length) {
+    const hiPositions = new Float32Array(highlightPoints.length * 3);
+    const hiColors = new Float32Array(highlightPoints.length * 3);
+    for (let i = 0; i < highlightPoints.length; i++) {
+      hiPositions[i * 3] = highlightPoints[i][0];
+      hiPositions[i * 3 + 1] = highlightPoints[i][1];
+      hiPositions[i * 3 + 2] = highlightPoints[i][2];
+      hiColors[i * 3] = 1.0;
+      hiColors[i * 3 + 1] = 0.96;
+      hiColors[i * 3 + 2] = 0.72;
+    }
+
+    const hiGeometry = new THREE.BufferGeometry();
+    hiGeometry.setAttribute("position", new THREE.Float32BufferAttribute(hiPositions, 3));
+    hiGeometry.setAttribute("color", new THREE.Float32BufferAttribute(hiColors, 3));
+    const hiMaterial = new THREE.PointsMaterial({
+      size: 0.42,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      map: circleTexture,
+      alphaMap: circleTexture,
+      alphaTest: 0.1,
+    });
+    highlightPointCloud = new THREE.Points(hiGeometry, hiMaterial);
+    scene.add(highlightPointCloud);
+  }
 }
 
 // ─── Ego marker ──────────────────────────────────────────────────
@@ -308,9 +353,13 @@ function buildBoxes(detections, activeTracks) {
     }
   }
 
+  const selectedInfo = resolveSelectedObject(state.bundle?.frame_summaries?.[state.frameIndex]);
+
   for (const det of detections) {
     const color = labelColor(det.label);
     const threeColor = new THREE.Color(color.r, color.g, color.b);
+    const isSelected = selectedInfo?.detection?.detection_id === det.detection_id;
+    const isDimmed = Boolean(selectedInfo) && !isSelected;
 
     const min = det.bbox_min;
     const max = det.bbox_max;
@@ -324,13 +373,33 @@ function buildBoxes(detections, activeTracks) {
     // Wireframe box
     const boxGeo = new THREE.BoxGeometry(sx, sy, sz);
     const edges = new THREE.EdgesGeometry(boxGeo);
-    const lineMat = new THREE.LineBasicMaterial({ color: threeColor, linewidth: 2, transparent: true, opacity: 0.9 });
+    const lineMat = new THREE.LineBasicMaterial({
+      color: isSelected ? 0xfff1b3 : threeColor,
+      linewidth: isSelected ? 3 : 2,
+      transparent: true,
+      opacity: isSelected ? 1.0 : (isDimmed ? 0.2 : 0.9),
+    });
     const wireframe = new THREE.LineSegments(edges, lineMat);
     wireframe.position.set(cx, cy, cz);
     if (det.heading_rad != null) {
       wireframe.rotation.z = det.heading_rad;
     }
     boxGroup.add(wireframe);
+
+    if (isSelected) {
+      const glowMat = new THREE.LineBasicMaterial({
+        color: 0xffc95a,
+        transparent: true,
+        opacity: 0.45,
+      });
+      const glow = new THREE.LineSegments(edges, glowMat);
+      glow.position.set(cx, cy, cz);
+      glow.scale.set(1.05, 1.05, 1.05);
+      if (det.heading_rad != null) {
+        glow.rotation.z = det.heading_rad;
+      }
+      boxGroup.add(glow);
+    }
 
     // Transparent clickable box for raycasting
     const clickGeo = new THREE.BoxGeometry(sx, sy, sz);
@@ -352,9 +421,9 @@ function buildBoxes(detections, activeTracks) {
     // Semi-transparent fill on bottom face
     const fillGeo = new THREE.PlaneGeometry(sx, sy);
     const fillMat = new THREE.MeshBasicMaterial({
-      color: threeColor,
+      color: isSelected ? 0xffc95a : threeColor,
       transparent: true,
-      opacity: 0.08,
+      opacity: isSelected ? 0.18 : (isDimmed ? 0.02 : 0.08),
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -370,7 +439,11 @@ function buildBoxes(detections, activeTracks) {
       new THREE.Vector3(cx, cy, -2.5),
       new THREE.Vector3(cx, cy, min[2]),
     ]);
-    const poleMat = new THREE.LineBasicMaterial({ color: threeColor, transparent: true, opacity: 0.2 });
+    const poleMat = new THREE.LineBasicMaterial({
+      color: isSelected ? 0xffc95a : threeColor,
+      transparent: true,
+      opacity: isSelected ? 0.45 : (isDimmed ? 0.06 : 0.2),
+    });
     boxGroup.add(new THREE.Line(poleGeo, poleMat));
 
     // Store data for 3D label projection
@@ -379,6 +452,7 @@ function buildBoxes(detections, activeTracks) {
       score: det.score,
       detId: det.detection_id,
       color: color.hex,
+      isSelected,
       topPos: new THREE.Vector3(cx, cy, max[2] + 0.5),
     };
   }
@@ -402,17 +476,21 @@ function buildTrails(bundle, frameIndex) {
     }
   }
 
+  const selectedInfo = resolveSelectedObject(bundle.frame_summaries[frameIndex]);
+
   for (const [trackId, trail] of history) {
     if (trail.length < 2) continue;
     const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]));
     const trackLabel = labelMap.get(trackId) || "object";
     const color = labelColor(trackLabel);
+    const isSelected = selectedInfo?.track?.track_id === trackId;
+    const isDimmed = Boolean(selectedInfo) && !isSelected;
     const geo = new THREE.BufferGeometry().setFromPoints(points);
     const mat = new THREE.LineBasicMaterial({
-      color: new THREE.Color(color.r, color.g, color.b),
+      color: isSelected ? new THREE.Color(1.0, 0.79, 0.35) : new THREE.Color(color.r, color.g, color.b),
       transparent: true,
-      opacity: 0.4,
-      linewidth: 1,
+      opacity: isSelected ? 0.95 : (isDimmed ? 0.08 : 0.4),
+      linewidth: isSelected ? 2 : 1,
     });
     trailGroup.add(new THREE.Line(geo, mat));
   }
@@ -430,6 +508,7 @@ function updateLabels() {
   for (const child of boxGroup.children) {
     if (!child.userData || !child.userData.topPos) continue;
     const data = child.userData;
+    if (state.selected && !data.isSelected) continue;
 
     const projected = data.topPos.clone().project(camera);
     if (projected.z > 1) continue;
@@ -554,12 +633,128 @@ function showInspectPanel(det, tracks) {
   ).join("");
 
   panel.style.display = "block";
-  state.selected = det.detection_id;
 }
 
 function hideInspectPanel() {
   document.getElementById("inspect-panel").style.display = "none";
   state.selected = null;
+  if (state.bundle) {
+    showFrame();
+  }
+}
+
+function pointInVolume(point, volume) {
+  return (
+    point[0] >= volume.bbox_min[0] &&
+    point[0] <= volume.bbox_max[0] &&
+    point[1] >= volume.bbox_min[1] &&
+    point[1] <= volume.bbox_max[1] &&
+    point[2] >= volume.bbox_min[2] &&
+    point[2] <= volume.bbox_max[2]
+  );
+}
+
+function findMatchedTrackForDetection(detection, tracks) {
+  if (!tracks?.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const track of tracks) {
+    const dx = track.centroid[0] - detection.centroid[0];
+    const dy = track.centroid[1] - detection.centroid[1];
+    const dist = Math.hypot(dx, dy);
+    if (dist < bestDist && dist < 3.0) {
+      best = track;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function findMatchedDetectionForTrack(track, detections) {
+  if (!detections?.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const detection of detections) {
+    const dx = detection.centroid[0] - track.centroid[0];
+    const dy = detection.centroid[1] - track.centroid[1];
+    const dist = Math.hypot(dx, dy);
+    if (dist < bestDist && dist < 3.0) {
+      best = detection;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function resolveSelectedObject(frame) {
+  if (!frame || !state.selected) return null;
+
+  if (state.selected.kind === "detection") {
+    const detection = frame.detections.find((item) => item.detection_id === state.selected.id);
+    if (!detection) return null;
+    return {
+      detection,
+      track: findMatchedTrackForDetection(detection, frame.active_tracks),
+      volume: detection,
+    };
+  }
+
+  if (state.selected.kind === "track") {
+    const track = frame.active_tracks.find((item) => item.track_id === state.selected.id);
+    if (!track) return null;
+    const detection = findMatchedDetectionForTrack(track, frame.detections);
+    return {
+      detection,
+      track,
+      volume: detection || track,
+    };
+  }
+
+  return null;
+}
+
+function showTrackPanel(track) {
+  const panel = document.getElementById("inspect-panel");
+  const content = document.getElementById("inspect-content");
+  if (!track) {
+    panel.style.display = "none";
+    return;
+  }
+
+  const v = track.velocity_mps;
+  const speed = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+  const rows = [
+    ["Track", `#${track.track_id}`],
+    ["Class", track.label || "object"],
+    ["Position", `[${track.centroid[0].toFixed(1)}, ${track.centroid[1].toFixed(1)}, ${track.centroid[2].toFixed(1)}]`],
+    ["Speed", speed < 100 ? `${speed.toFixed(1)} m/s` : "noisy"],
+    ["Hits", `${track.hits} / ${track.age_frames} frames`],
+    ["Distance", `${track.total_distance_m.toFixed(2)} m`],
+  ];
+
+  content.innerHTML = rows.map(([k, v]) =>
+    `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
+  ).join("");
+  panel.style.display = "block";
+}
+
+function selectObject(selection) {
+  state.selected = selection;
+  const frame = state.bundle?.frame_summaries?.[state.frameIndex];
+  const selectedInfo = resolveSelectedObject(frame);
+  if (!selection) {
+    hideInspectPanel();
+    showFrame();
+    return;
+  }
+  if (selectedInfo?.detection) {
+    showInspectPanel(selectedInfo.detection, frame?.active_tracks || []);
+  } else if (selectedInfo?.track) {
+    showTrackPanel(selectedInfo.track);
+  } else {
+    hideInspectPanel();
+  }
+  showFrame();
 }
 
 // ─── Sidebar panels ─────────────────────────────────────────────
@@ -630,7 +825,12 @@ function updateSidebar() {
   } else {
     objectsEl.innerHTML = items.map(it => {
       const scoreText = it.score != null ? `${Math.round(it.score * 100)}%` : (it.meta || "");
-      return `<div class="obj-card">
+      const isSelected = state.selected && (
+        (it.type === "det" && state.selected.kind === "detection" && state.selected.id === it.id) ||
+        (it.type === "track" && state.selected.kind === "track" && state.selected.id === Number(it.id.replace("track-", "")))
+      );
+      return `<div class="obj-card${isSelected ? " is-selected" : ""}">
+        <button class="obj-focus" data-kind="${it.type === "det" ? "detection" : "track"}" data-id="${it.id}" title="Focus object">Focus</button>
         <div class="obj-dot" style="background:${it.color}"></div>
         <span class="obj-label">${it.label}</span>
         <span class="obj-meta">${scoreText}</span>
@@ -680,7 +880,8 @@ function setBundle(bundle) {
   state.bundle = bundle;
   state.frameIndex = 0;
   stopPlayback();
-  hideInspectPanel();
+  state.selected = null;
+  document.getElementById("inspect-panel").style.display = "none";
 
   const slider = document.getElementById("frame-slider");
   slider.min = 0;
@@ -702,9 +903,10 @@ function setBundle(bundle) {
 function showFrame() {
   if (!state.bundle) return;
   const frame = state.bundle.frame_summaries[state.frameIndex];
+  const selectedInfo = resolveSelectedObject(frame);
 
   applyFramePose(frame);
-  buildPointCloud(frame.preview_points);
+  buildPointCloud(frame.preview_points, selectedInfo?.volume || null);
   buildBoxes(frame.detections, frame.active_tracks);
   buildTrails(state.bundle, state.frameIndex);
   updateSidebar();
@@ -764,6 +966,19 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
 });
 
 document.getElementById("inspect-close").addEventListener("click", hideInspectPanel);
+document.getElementById("object-list").addEventListener("click", (e) => {
+  const focusButton = e.target.closest(".obj-focus");
+  if (!focusButton || !state.bundle) return;
+  const kind = focusButton.dataset.kind;
+  const rawId = focusButton.dataset.id;
+  if (kind === "detection") {
+    selectObject({ kind: "detection", id: rawId });
+    return;
+  }
+  if (kind === "track") {
+    selectObject({ kind: "track", id: Number(rawId.replace("track-", "")) });
+  }
+});
 
 // Click-to-inspect on 3D boxes (distinguish click from orbit drag)
 renderer.domElement.addEventListener("mousedown", (e) => {
@@ -786,10 +1001,9 @@ renderer.domElement.addEventListener("mouseup", (e) => {
   if (intersects.length > 0) {
     const hit = intersects[0].object;
     const det = hit.userData.detection;
-    const tracks = hit.userData.tracks;
-    showInspectPanel(det, tracks);
+    selectObject({ kind: "detection", id: det.detection_id });
   } else {
-    hideInspectPanel();
+    selectObject(null);
   }
 });
 
