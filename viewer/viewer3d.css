@@ -200,7 +200,7 @@ canvas { display: block; }
 
 .obj-card {
   display: grid;
-  grid-template-columns: 10px 1fr auto;
+  grid-template-columns: auto 10px 1fr auto;
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
@@ -212,6 +212,30 @@ canvas { display: block; }
   transition: background 0.12s;
 }
 .obj-card:hover { background: rgba(255, 255, 255, 0.06); }
+
+.obj-card.is-selected {
+  background: rgba(255, 201, 90, 0.09);
+  border-color: rgba(255, 201, 90, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(255, 201, 90, 0.18);
+}
+
+.obj-focus {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.obj-focus:hover {
+  background: rgba(255, 201, 90, 0.12);
+  color: var(--text);
+}
 
 .obj-dot {
   width: 10px;
