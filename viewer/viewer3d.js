@@ -20,6 +20,19 @@ function labelColor(label) {
   return COLORS[(label || "object").toLowerCase()] || COLORS.object;
 }
 
+function normalizedLabel(label) {
+  return (label || "object").toLowerCase();
+}
+
+function isLabelVisible(label) {
+  return state.classVisibility[normalizedLabel(label)] !== false;
+}
+
+function formatLabel(label) {
+  const value = normalizedLabel(label);
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 // ─── State ───────────────────────────────────────────────────────
 
 const state = {
@@ -28,6 +41,7 @@ const state = {
   playing: false,
   timer: null,
   selected: null,  // selected object id
+  classVisibility: {},
   overlays: {
     worldAxes: true,
     egoMarker: true,
@@ -356,6 +370,7 @@ function buildBoxes(detections, activeTracks) {
   const selectedInfo = resolveSelectedObject(state.bundle?.frame_summaries?.[state.frameIndex]);
 
   for (const det of detections) {
+    if (!isLabelVisible(det.label)) continue;
     const color = labelColor(det.label);
     const threeColor = new THREE.Color(color.r, color.g, color.b);
     const isSelected = selectedInfo?.detection?.detection_id === det.detection_id;
@@ -482,6 +497,7 @@ function buildTrails(bundle, frameIndex) {
     if (trail.length < 2) continue;
     const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]));
     const trackLabel = labelMap.get(trackId) || "object";
+    if (!isLabelVisible(trackLabel)) continue;
     const color = labelColor(trackLabel);
     const isSelected = selectedInfo?.track?.track_id === trackId;
     const isDimmed = Boolean(selectedInfo) && !isSelected;
@@ -628,7 +644,20 @@ function showInspectPanel(det, tracks) {
     ["Distance", distance],
   ];
 
-  content.innerHTML = rows.map(([k, v]) =>
+  const hero = `
+    <div class="inspect-hero">
+      <div class="inspect-pill">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color.hex}"></span>
+        ${formatLabel(det.label)}
+      </div>
+      <div class="inspect-title">
+        <div class="inspect-name">${formatLabel(det.label)}</div>
+        <div class="inspect-score">${det.score != null ? `${Math.round(det.score * 100)}%` : "Tracked"}</div>
+      </div>
+    </div>
+  `;
+
+  content.innerHTML = hero + rows.map(([k, v]) =>
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
   ).join("");
 
@@ -732,7 +761,21 @@ function showTrackPanel(track) {
     ["Distance", `${track.total_distance_m.toFixed(2)} m`],
   ];
 
-  content.innerHTML = rows.map(([k, v]) =>
+  const color = labelColor(track.label);
+  const hero = `
+    <div class="inspect-hero">
+      <div class="inspect-pill">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color.hex}"></span>
+        Track ${track.track_id}
+      </div>
+      <div class="inspect-title">
+        <div class="inspect-name">${formatLabel(track.label)}</div>
+        <div class="inspect-score">${speed < 100 ? `${speed.toFixed(1)} m/s` : "noisy"}</div>
+      </div>
+    </div>
+  `;
+
+  content.innerHTML = hero + rows.map(([k, v]) =>
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
   ).join("");
   panel.style.display = "block";
@@ -762,6 +805,7 @@ function selectObject(selection) {
 function updateSidebar() {
   const statsEl = document.getElementById("scene-stats");
   const objectsEl = document.getElementById("object-list");
+  const classControlsEl = document.getElementById("class-controls");
   const statusEl = document.getElementById("status-label");
 
   const bundle = state.bundle;
@@ -769,6 +813,7 @@ function updateSidebar() {
 
   if (!bundle || !frame) {
     statsEl.innerHTML = "";
+    classControlsEl.innerHTML = "";
     objectsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Open a replay JSON to begin.</div>';
     return;
   }
@@ -792,9 +837,31 @@ function updateSidebar() {
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
   ).join("");
 
+  const classCounts = new Map();
+  for (const det of frame.detections) {
+    const key = normalizedLabel(det.label);
+    classCounts.set(key, (classCounts.get(key) || 0) + 1);
+  }
+  for (const track of frame.active_tracks) {
+    const key = normalizedLabel(track.label);
+    classCounts.set(key, (classCounts.get(key) || 0) + 1);
+  }
+  const orderedLabels = [...classCounts.keys()].sort();
+  classControlsEl.innerHTML = orderedLabels.map((label) => {
+    const color = labelColor(label);
+    const checked = isLabelVisible(label) ? "checked" : "";
+    return `<label class="class-row">
+      <input type="checkbox" data-class-label="${label}" ${checked}>
+      <span class="obj-dot" style="background:${color.hex}"></span>
+      <span class="class-label">${formatLabel(label)}</span>
+      <span class="class-count">${classCounts.get(label)}</span>
+    </label>`;
+  }).join("");
+
   // Object cards: detections first, then tracks
   const items = [];
   for (const det of frame.detections) {
+    if (!isLabelVisible(det.label)) continue;
     items.push({
       type: "det",
       label: det.label || "object",
@@ -805,6 +872,7 @@ function updateSidebar() {
   }
   for (const track of frame.active_tracks) {
     const trackLabel = track.label || "object";
+    if (!isLabelVisible(trackLabel)) continue;
     const trackColor = labelColor(trackLabel);
     const v = track.velocity_mps;
     const speed = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
@@ -874,6 +942,27 @@ function initializeOverlayControls() {
 }
 initializeOverlayControls();
 
+function initializeClassVisibility(bundle) {
+  const labels = new Set(["car", "truck", "bus", "pedestrian", "bicycle", "object"]);
+  const counts = bundle?.metrics?.label_counts || {};
+  for (const label of Object.keys(counts)) {
+    labels.add(normalizedLabel(label));
+  }
+  for (const frame of bundle?.frame_summaries || []) {
+    for (const det of frame.detections || []) {
+      labels.add(normalizedLabel(det.label));
+    }
+    for (const track of frame.active_tracks || []) {
+      labels.add(normalizedLabel(track.label));
+    }
+  }
+  for (const label of labels) {
+    if (!(label in state.classVisibility)) {
+      state.classVisibility[label] = true;
+    }
+  }
+}
+
 // ─── Frame management ───────────────────────────────────────────
 
 function setBundle(bundle) {
@@ -881,7 +970,9 @@ function setBundle(bundle) {
   state.frameIndex = 0;
   stopPlayback();
   state.selected = null;
+  state.classVisibility = {};
   document.getElementById("inspect-panel").style.display = "none";
+  initializeClassVisibility(bundle);
 
   const slider = document.getElementById("frame-slider");
   slider.min = 0;
@@ -966,6 +1057,20 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
 });
 
 document.getElementById("inspect-close").addEventListener("click", hideInspectPanel);
+document.getElementById("class-controls").addEventListener("change", (e) => {
+  const toggle = e.target.closest("[data-class-label]");
+  if (!toggle) return;
+  const label = toggle.dataset.classLabel;
+  state.classVisibility[label] = toggle.checked;
+  const frame = state.bundle?.frame_summaries?.[state.frameIndex];
+  const selectedInfo = resolveSelectedObject(frame);
+  const selectedLabel = selectedInfo?.detection?.label || selectedInfo?.track?.label;
+  if (selectedLabel && !isLabelVisible(selectedLabel)) {
+    state.selected = null;
+    document.getElementById("inspect-panel").style.display = "none";
+  }
+  showFrame();
+});
 document.getElementById("object-list").addEventListener("click", (e) => {
   const focusButton = e.target.closest(".obj-focus");
   if (!focusButton || !state.bundle) return;
