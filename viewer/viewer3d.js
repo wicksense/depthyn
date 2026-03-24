@@ -454,7 +454,7 @@ function updateLabels() {
 
   for (const item of egoGroup.userData.labels || []) {
     if (!state.overlays.egoMarker) continue;
-    const projected = item.pos.clone().project(camera);
+    const projected = egoGroup.localToWorld(item.pos.clone()).project(camera);
     if (projected.z > 1) continue;
 
     const x = projected.x * halfW + halfW;
