@@ -100,8 +100,10 @@ createGroundGrid();
 let pointCloud = null;
 let boxGroup = new THREE.Group();
 let trailGroup = new THREE.Group();
+let egoGroup = new THREE.Group();
 scene.add(boxGroup);
 scene.add(trailGroup);
+scene.add(egoGroup);
 
 const labelContainer = document.createElement("div");
 labelContainer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden;";
@@ -181,6 +183,82 @@ function buildPointCloud(points) {
 
   pointCloud = new THREE.Points(geometry, material);
   scene.add(pointCloud);
+}
+
+// ─── Ego marker ──────────────────────────────────────────────────
+
+function buildEgoMarker() {
+  egoGroup.clear();
+
+  const lidarGlowGeo = new THREE.RingGeometry(0.35, 0.55, 32);
+  const lidarGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x3b8bff,
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const lidarGlow = new THREE.Mesh(lidarGlowGeo, lidarGlowMat);
+  lidarGlow.rotation.x = Math.PI / 2;
+  egoGroup.add(lidarGlow);
+
+  const vehicleLength = 4.6;
+  const vehicleWidth = 2.0;
+  const halfL = vehicleLength / 2;
+  const halfW = vehicleWidth / 2;
+  const outlinePts = [
+    new THREE.Vector3(-halfL, -halfW, 0.02),
+    new THREE.Vector3(halfL, -halfW, 0.02),
+    new THREE.Vector3(halfL, halfW, 0.02),
+    new THREE.Vector3(-halfL, halfW, 0.02),
+    new THREE.Vector3(-halfL, -halfW, 0.02),
+  ];
+  const outlineGeo = new THREE.BufferGeometry().setFromPoints(outlinePts);
+  const outlineMat = new THREE.LineBasicMaterial({
+    color: 0x6ea3ff,
+    transparent: true,
+    opacity: 0.55,
+  });
+  egoGroup.add(new THREE.Line(outlineGeo, outlineMat));
+
+  const noseGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(halfL, -halfW, 0.02),
+    new THREE.Vector3(halfL + 0.8, 0, 0.02),
+    new THREE.Vector3(halfL, halfW, 0.02),
+  ]);
+  egoGroup.add(new THREE.Line(noseGeo, outlineMat));
+
+  const arrowDir = new THREE.Vector3(1, 0, 0);
+  const arrow = new THREE.ArrowHelper(
+    arrowDir,
+    new THREE.Vector3(0, 0, 0.1),
+    6.5,
+    0xff6a3d,
+    0.9,
+    0.45,
+  );
+  egoGroup.add(arrow);
+
+  const leftWingGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0.05),
+    new THREE.Vector3(0, 3.1, 0.05),
+  ]);
+  const leftWingMat = new THREE.LineBasicMaterial({
+    color: 0x3dcc7a,
+    transparent: true,
+    opacity: 0.35,
+  });
+  egoGroup.add(new THREE.Line(leftWingGeo, leftWingMat));
+
+  egoGroup.userData = {
+    labels: [
+      { text: "Forward (+X)", color: "#ff6a3d", pos: new THREE.Vector3(7.4, 0, 0.35) },
+      { text: "Rear", color: "#7f8aad", pos: new THREE.Vector3(-4.6, 0, 0.25) },
+      { text: "Left (+Y)", color: "#3dcc7a", pos: new THREE.Vector3(0, 4.2, 0.25) },
+      { text: "Right (-Y)", color: "#7f8aad", pos: new THREE.Vector3(0, -4.2, 0.25) },
+      { text: "LiDAR", color: "#6ea3ff", pos: new THREE.Vector3(0, 0, 0.9) },
+    ],
+  };
 }
 
 // ─── 3D bounding boxes ──────────────────────────────────────────
@@ -343,6 +421,23 @@ function updateLabels() {
     el.textContent = data.label + scoreText;
     labelContainer.appendChild(el);
   }
+
+  for (const item of egoGroup.userData.labels || []) {
+    const projected = item.pos.clone().project(camera);
+    if (projected.z > 1) continue;
+
+    const x = projected.x * halfW + halfW;
+    const y = -projected.y * halfH + halfH;
+    if (x < -140 || x > window.innerWidth + 140 || y < -60 || y > window.innerHeight + 60) continue;
+
+    const el = document.createElement("div");
+    el.className = "label-3d label-ego";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.style.color = item.color;
+    el.textContent = item.text;
+    labelContainer.appendChild(el);
+  }
 }
 
 // ─── Click-to-inspect panel ──────────────────────────────────────
@@ -460,6 +555,7 @@ function updateSidebar() {
     ["Detections", frame.detection_count],
     ["Tracks", frame.active_tracks.length],
     ["Mode", bundle.config.mode],
+    ["Frame axes", "+X forward · +Y left"],
   ];
   statsEl.innerHTML = rows.map(([k, v]) =>
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
@@ -511,6 +607,7 @@ function buildLegend() {
   const el = document.getElementById("legend-list");
   const items = [
     ["Point cloud", "#8b6fbf"],
+    ["Ego forward", "#ff6a3d"],
     ["Car", COLORS.car.hex],
     ["Truck", COLORS.truck.hex],
     ["Pedestrian", COLORS.pedestrian.hex],
@@ -542,6 +639,7 @@ function setBundle(bundle) {
   const cy = (b.min[1] + b.max[1]) / 2;
   controls.target.set(cx, cy, 0);
   camera.position.set(cx, cy - 50, 40);
+  buildEgoMarker();
 
   showFrame();
 }

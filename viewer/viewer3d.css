@@ -266,6 +266,17 @@ canvas { display: block; }
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
+.label-ego {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(7, 9, 13, 0.82);
+  border-left: 2px solid currentColor;
+}
+
 /* ── Inspect panel (click-to-inspect) ────────────────── */
 
 #inspect-panel {
