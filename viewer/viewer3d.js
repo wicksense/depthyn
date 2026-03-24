@@ -28,6 +28,10 @@ const state = {
   playing: false,
   timer: null,
   selected: null,  // selected object id
+  overlays: {
+    worldAxes: true,
+    egoMarker: true,
+  },
 };
 
 // ─── Three.js setup ──────────────────────────────────────────────
@@ -71,8 +75,11 @@ scene.add(dirLight);
 
 // ─── Ground grid ─────────────────────────────────────────────────
 
+let worldAxesGroup = null;
+
 function createGroundGrid() {
   const gridGroup = new THREE.Group();
+  const axesGroup = new THREE.Group();
 
   const grid = new THREE.GridHelper(200, 40, 0x1a2030, 0x141826);
   grid.rotation.x = Math.PI / 2;
@@ -87,11 +94,13 @@ function createGroundGrid() {
     const g = new THREE.BufferGeometry().setFromPoints(pts);
     return new THREE.Line(g, axMat(color));
   };
-  gridGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(axLen,0,0)], 0xff4444));
-  gridGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(0,axLen,0)], 0x44ff44));
-  gridGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,axLen)], 0x4488ff));
+  axesGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(axLen,0,0)], 0xff4444));
+  axesGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(0,axLen,0)], 0x44ff44));
+  axesGroup.add(makeLine([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,axLen)], 0x4488ff));
 
   scene.add(gridGroup);
+  scene.add(axesGroup);
+  worldAxesGroup = axesGroup;
 }
 createGroundGrid();
 
@@ -273,6 +282,15 @@ function applyFramePose(frame) {
   egoGroup.rotation.set(0, 0, pose.heading_rad || 0);
 }
 
+function applyOverlayVisibility() {
+  if (worldAxesGroup) {
+    worldAxesGroup.visible = state.overlays.worldAxes;
+  }
+  if (egoGroup) {
+    egoGroup.visible = state.overlays.egoMarker;
+  }
+}
+
 // ─── 3D bounding boxes ──────────────────────────────────────────
 
 function buildBoxes(detections, activeTracks) {
@@ -435,6 +453,7 @@ function updateLabels() {
   }
 
   for (const item of egoGroup.userData.labels || []) {
+    if (!state.overlays.egoMarker) continue;
     const projected = item.pos.clone().project(camera);
     if (projected.z > 1) continue;
 
@@ -637,6 +656,24 @@ function buildLegend() {
 }
 buildLegend();
 
+function initializeOverlayControls() {
+  const worldAxesToggle = document.getElementById("toggle-world-axes");
+  const egoMarkerToggle = document.getElementById("toggle-ego-marker");
+
+  worldAxesToggle.checked = state.overlays.worldAxes;
+  egoMarkerToggle.checked = state.overlays.egoMarker;
+
+  worldAxesToggle.addEventListener("change", (event) => {
+    state.overlays.worldAxes = event.target.checked;
+    applyOverlayVisibility();
+  });
+  egoMarkerToggle.addEventListener("change", (event) => {
+    state.overlays.egoMarker = event.target.checked;
+    applyOverlayVisibility();
+  });
+}
+initializeOverlayControls();
+
 // ─── Frame management ───────────────────────────────────────────
 
 function setBundle(bundle) {
@@ -657,6 +694,7 @@ function setBundle(bundle) {
   controls.target.set(cx, cy, 0);
   camera.position.set(cx, cy - 50, 40);
   buildEgoMarker();
+  applyOverlayVisibility();
 
   showFrame();
 }
