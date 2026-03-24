@@ -62,10 +62,45 @@ def _iter_frames(config: ReplayConfig) -> list:
     ]
 
 
-def run_replay(config: ReplayConfig) -> dict[str, object]:
-    frames = _iter_frames(config)
+def _stream_frames(config: ReplayConfig):
+    """Yield frames lazily from the configured source."""
+    source_type = _resolve_source_type(config)
 
+    if source_type == "pcap":
+        from depthyn.source.ouster_pcap import iter_ouster_pcap_frames
+
+        yield from iter_ouster_pcap_frames(
+            config.input_dir,
+            voxel_size_m=config.voxel_size_m,
+            min_range_m=config.min_range_m,
+            max_range_m=config.max_range_m,
+            z_min_m=config.z_min_m,
+            z_max_m=config.z_max_m,
+            max_frames=config.max_frames,
+        )
+        return
+
+    frame_paths = discover_converted_csv_frames(config.input_dir)
+    if config.max_frames is not None:
+        frame_paths = frame_paths[: config.max_frames]
+    for path in frame_paths:
+        yield load_converted_csv_frame(
+            path,
+            voxel_size_m=config.voxel_size_m,
+            min_range_m=config.min_range_m,
+            max_range_m=config.max_range_m,
+            z_min_m=config.z_min_m,
+            z_max_m=config.z_max_m,
+        )
+
+
+def _detector_uses_foreground(config: ReplayConfig, detector) -> bool:
+    return detector.input_mode == "foreground" or config.detector_on_foreground
+
+
+def run_replay(config: ReplayConfig) -> dict[str, object]:
     detector = create_detector(config)
+    detector_uses_foreground = _detector_uses_foreground(config, detector)
     zones = (
         load_zone_definitions(config.zone_config)
         if config.zone_config is not None
@@ -76,9 +111,10 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         BackgroundModel(
             cell_size_m=config.cluster_cell_size_m,
             min_hits=config.background_min_hits,
+            fade_time_s=config.background_fade_time_s,
         )
         if config.mode == "stationary"
-        and detector.input_mode == "foreground"
+        and detector_uses_foreground
         else None
     )
     tracker = SimpleTracker(
@@ -99,14 +135,16 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     scene_min = [float("inf"), float("inf"), float("inf")]
     scene_max = [float("-inf"), float("-inf"), float("-inf")]
 
-    for frame_index, frame in enumerate(frames):
+    frame_count = 0
+    for frame_index, frame in enumerate(_stream_frames(config)):
+        frame_count += 1
         timestamp_ns_values.append(frame.timestamp_ns)
         total_points += len(frame.points)
         stage = "tracking"
         working_points = frame.points
 
         if background_model is not None and frame_index < config.background_warmup_frames:
-            background_model.observe(frame.points)
+            background_model.observe(frame.points, timestamp_ns=frame.timestamp_ns)
             working_points = []
             detections = []
             detector_metadata = {"mode": "background_warmup"}
@@ -114,14 +152,27 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             stage = "background_warmup"
         else:
             if background_model is not None:
-                working_points = background_model.filter_foreground(frame.points)
+                working_points = background_model.filter_foreground(
+                    frame.points, timestamp_ns=frame.timestamp_ns
+                )
             detector_points = (
-                working_points if detector.input_mode == "foreground" else frame.points
+                working_points if detector_uses_foreground else frame.points
             )
             detector_result = detector.detect(frame, detector_points)
             detections = detector_result.detections
             detector_metadata = detector_result.metadata
             active_tracks = tracker.update(detections, frame.timestamp_ns)
+
+            # Continuous background observation with object-aware freezing
+            if background_model is not None:
+                protected = background_model.protected_cells_from_detections(
+                    detections, margin_cells=2
+                )
+                background_model.observe(
+                    frame.points,
+                    timestamp_ns=frame.timestamp_ns,
+                    protected_cells=protected,
+                )
             total_detections += len(detections)
             for detection in detections:
                 label_counts[detection.label] = label_counts.get(detection.label, 0) + 1
@@ -186,7 +237,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "active_tracks": active_track_payload,
                 "scene_state": scene_state.to_dict(),
                 "detector_input_points": len(
-                    working_points if detector.input_mode == "foreground" else frame.points
+                    working_points if detector_uses_foreground else frame.points
                 ),
                 "detector_metadata": detector_metadata,
             }
@@ -203,16 +254,16 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         },
         "detector": config.detector.to_dict(),
         "config": config.to_dict(),
-        "frames_processed": len(frame_summaries),
+        "frames_processed": frame_count,
         "scene_bounds": _finalize_bounds(scene_min, scene_max),
         "zone_definitions": [zone.to_dict() for zone in zones],
         "playback": {
             "median_frame_interval_ms": _median_frame_interval_ms(timestamp_ns_values),
         },
         "metrics": {
-            "avg_points_after_filtering": _safe_average(total_points, len(frame_summaries)),
+            "avg_points_after_filtering": _safe_average(total_points, frame_count),
             "avg_foreground_points": _safe_average(
-                total_foreground_points, len(frame_summaries)
+                total_foreground_points, frame_count
             ),
             "total_detections": total_detections,
             "total_tracks": len(tracks),
@@ -235,7 +286,8 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
 
 def write_summary(summary: dict[str, object], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2)
 
 
 def _safe_average(total: int, count: int) -> float:

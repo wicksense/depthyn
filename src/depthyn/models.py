@@ -12,6 +12,7 @@ class Frame:
     timestamp_ns: int
     points: list[Point3D]
     source_path: Path
+    sensor_frame_id: int | None = None
 
 
 @dataclass(slots=True)

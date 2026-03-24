@@ -37,6 +37,7 @@ class ReplayConfig:
     input_dir: Path
     output_json: Path
     mode: str = "mobile"
+    detector_on_foreground: bool = False
     source_type: str = "auto"
     zone_config: Path | None = None
     max_frames: int | None = None
@@ -47,14 +48,15 @@ class ReplayConfig:
     max_range_m: float = 60.0
     z_min_m: float = -2.5
     z_max_m: float = 4.5
-    cluster_cell_size_m: float = 0.75
-    min_cluster_points: int = 12
-    min_cluster_cells: int = 3
-    min_cluster_height_m: float = 0.4
+    cluster_cell_size_m: float = 0.5
+    min_cluster_points: int = 7
+    min_cluster_cells: int = 2
+    min_cluster_height_m: float = 0.05
     max_cluster_height_m: float = 5.0
     max_cluster_width_m: float = 10.0
     background_warmup_frames: int = 10
     background_min_hits: int = 6
+    background_fade_time_s: float = 180.0
     track_max_distance_m: float = 3.0
     track_max_missed_frames: int = 6
 
