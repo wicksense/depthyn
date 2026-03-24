@@ -16,6 +16,22 @@ class Frame:
 
 
 @dataclass(slots=True)
+class FramePose:
+    timestamp_ns: int
+    position_m: Point3D
+    heading_rad: float
+    source: str = "gps"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "timestamp_ns": self.timestamp_ns,
+            "position_m": [round(value, 4) for value in self.position_m],
+            "heading_rad": round(self.heading_rad, 6),
+            "source": self.source,
+        }
+
+
+@dataclass(slots=True)
 class Detection:
     detection_id: str
     centroid: Point3D
