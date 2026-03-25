@@ -38,6 +38,15 @@ function formatEventType(eventType) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function formatDirection(direction) {
+  if (!direction) return "";
+  return String(direction)
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function eventTypeColor(eventType) {
   switch (eventType) {
     case "entered":
@@ -65,6 +74,21 @@ function scanlineModeSupported() {
   return currentReferenceFrame() === "sensor";
 }
 
+function filteredEventTimeline() {
+  return (state.eventTimeline || []).filter((event) => {
+    if (state.eventFilters.type !== "all" && event.event_type !== state.eventFilters.type) {
+      return false;
+    }
+    if (state.eventFilters.label !== "all" && normalizedLabel(event.label) !== state.eventFilters.label) {
+      return false;
+    }
+    if (state.eventFilters.rule !== "all" && event.rule_id !== state.eventFilters.rule) {
+      return false;
+    }
+    return true;
+  });
+}
+
 // ─── State ───────────────────────────────────────────────────────
 
 const state = {
@@ -77,6 +101,11 @@ const state = {
   referenceFrame: "sensor",
   classVisibility: {},
   eventTimeline: [],
+  eventFilters: {
+    type: "all",
+    label: "all",
+    rule: "all",
+  },
   pointOwnership: {
     byDetectionId: new Map(),
   },
@@ -965,7 +994,7 @@ function buildEvents(frame, bundle) {
         ? zoneCenter(zone, zoneDefinitions)
         : [0, 0, 0.35];
 
-    const color = event.event_type === "dwell" ? 0xffd166 : event.event_type === "exited" ? 0xff6b6b : 0x7ee787;
+    const color = Number.parseInt(eventTypeColor(event.event_type).slice(1), 16);
     const beaconGeo = new THREE.SphereGeometry(0.2, 12, 12);
     const beaconMat = new THREE.MeshBasicMaterial({
       color,
@@ -988,7 +1017,7 @@ function buildEvents(frame, bundle) {
     eventGroup.add(new THREE.Line(poleGeo, poleMat));
 
     eventGroup.userData.labels.push({
-      text: `${event.zone_name}: ${event.event_type}`,
+      text: `${event.zone_name}: ${formatEventType(event.event_type)}${event.direction ? ` · ${formatDirection(event.direction)}` : ""}`,
       color: `#${color.toString(16).padStart(6, "0")}`,
       pos: new THREE.Vector3(center[0], center[1], center[2] + 0.85),
     });
@@ -1914,18 +1943,106 @@ function buildEventTimeline(bundle) {
   return bundle.event_summaries
     .map((event, index) => ({
       ...event,
-      key: `${event.timestamp_ns}-${event.track_id}-${event.zone_id}-${index}`,
+      key: `${event.timestamp_ns}-${event.track_id}-${event.zone_id}-${event.rule_kind || "zone"}-${index}`,
       frame_index: frameByTimestamp.get(event.timestamp_ns) ?? 0,
       label: trackLabelById.get(event.track_id) || "object",
+      rule_id: event.zone_id,
+      rule_name: event.zone_name,
+      rule_kind: event.rule_kind || "zone",
     }))
     .sort((left, right) => left.frame_index - right.frame_index);
+}
+
+function renderEventControls(bundle) {
+  const typeEl = document.getElementById("event-filter-type");
+  const classEl = document.getElementById("event-filter-class");
+  const ruleEl = document.getElementById("event-filter-rule");
+  if (!typeEl || !classEl || !ruleEl) return;
+
+  if (!bundle) {
+    typeEl.innerHTML = '<option value="all">All</option>';
+    classEl.innerHTML = '<option value="all">All</option>';
+    ruleEl.innerHTML = '<option value="all">All</option>';
+    typeEl.value = "all";
+    classEl.value = "all";
+    ruleEl.value = "all";
+    return;
+  }
+
+  const timeline = state.eventTimeline || [];
+  const eventTypes = [...new Set(timeline.map((event) => event.event_type))].sort();
+  const eventLabels = [...new Set(timeline.map((event) => normalizedLabel(event.label)))].sort();
+  const eventRules = [...new Map(
+    timeline.map((event) => [event.rule_id, event.rule_name]),
+  ).entries()].sort((left, right) => left[1].localeCompare(right[1]));
+
+  typeEl.innerHTML = ['<option value="all">All</option>']
+    .concat(eventTypes.map((value) => `<option value="${value}">${formatEventType(value)}</option>`))
+    .join("");
+  classEl.innerHTML = ['<option value="all">All</option>']
+    .concat(eventLabels.map((value) => `<option value="${value}">${formatLabel(value)}</option>`))
+    .join("");
+  ruleEl.innerHTML = ['<option value="all">All</option>']
+    .concat(eventRules.map(([value, label]) => `<option value="${value}">${label}</option>`))
+    .join("");
+
+  typeEl.value = eventTypes.includes(state.eventFilters.type) ? state.eventFilters.type : "all";
+  classEl.value = eventLabels.includes(state.eventFilters.label) ? state.eventFilters.label : "all";
+  ruleEl.value = eventRules.some(([value]) => value === state.eventFilters.rule) ? state.eventFilters.rule : "all";
+}
+
+function exportEventsAsJson() {
+  const timeline = filteredEventTimeline();
+  const payload = {
+    project: state.bundle?.project || "Depthyn",
+    detector: state.bundle?.metrics?.detector_name || "unknown",
+    reference_frame: currentReferenceFrame(),
+    filters: { ...state.eventFilters },
+    event_count: timeline.length,
+    events: timeline,
+  };
+  downloadText("depthyn-events.json", JSON.stringify(payload, null, 2), "application/json");
+}
+
+function exportEventsAsCsv() {
+  const timeline = filteredEventTimeline();
+  const rows = [
+    ["frame_index", "timestamp_ns", "event_type", "rule_kind", "rule_name", "track_id", "label", "direction", "dwell_seconds"],
+    ...timeline.map((event) => [
+      String(event.frame_index),
+      String(event.timestamp_ns),
+      event.event_type || "",
+      event.rule_kind || "",
+      event.rule_name || "",
+      String(event.track_id),
+      event.label || "",
+      event.direction || "",
+      event.dwell_seconds != null ? String(event.dwell_seconds) : "",
+    ]),
+  ];
+  const csv = rows
+    .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+  downloadText("depthyn-events.csv", csv, "text/csv");
+}
+
+function downloadText(filename, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderEventMarkers(bundle) {
   const markersEl = document.getElementById("frame-event-markers");
   if (!markersEl) return;
   const frameCount = Math.max(1, bundle?.frame_summaries?.length || 1);
-  const timeline = state.eventTimeline || [];
+  const timeline = filteredEventTimeline();
   if (!timeline.length) {
     markersEl.innerHTML = "";
     return;
@@ -1934,16 +2051,22 @@ function renderEventMarkers(bundle) {
     const left = frameCount <= 1
       ? 0
       : (event.frame_index / (frameCount - 1)) * 100;
-    return `<button class="event-marker" data-event-key="${event.key}" title="${formatEventType(event.event_type)} · ${event.zone_name} · frame ${event.frame_index + 1}" style="left:${left}%;background:${eventTypeColor(event.event_type)}"></button>`;
+    const direction = event.direction ? ` · ${formatDirection(event.direction)}` : "";
+    return `<button class="event-marker" data-event-key="${event.key}" title="${formatEventType(event.event_type)} · ${event.rule_name}${direction} · frame ${event.frame_index + 1}" style="left:${left}%;background:${eventTypeColor(event.event_type)}"></button>`;
   }).join("");
 }
 
 function renderEventPanel(bundle) {
   const eventListEl = document.getElementById("event-list");
   if (!eventListEl) return;
-  const timeline = state.eventTimeline || [];
-  if (!timeline.length) {
+  const allEvents = state.eventTimeline || [];
+  const timeline = filteredEventTimeline();
+  if (!allEvents.length) {
     eventListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No scene events in this replay.</div>';
+    return;
+  }
+  if (!timeline.length) {
+    eventListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No scene events match the current filters.</div>';
     return;
   }
 
@@ -1958,14 +2081,18 @@ function renderEventPanel(bundle) {
     const badgeColor = eventTypeColor(event.event_type);
     const label = formatLabel(event.label);
     const dwell = event.dwell_seconds != null ? ` · ${event.dwell_seconds.toFixed(1)}s` : "";
+    const direction = event.direction ? `<span class="event-direction">${formatDirection(event.direction)}</span>` : "";
     return `<div class="event-card${isCurrent ? " is-current" : ""}">
       <button class="event-jump" data-event-key="${event.key}">Jump</button>
       <div class="event-main">
         <div class="event-title">
           <span class="event-badge" style="background:${badgeColor}">${formatEventType(event.event_type)}</span>
-          <span>${event.zone_name}</span>
+          <span>${event.rule_name}</span>
         </div>
-        <div class="event-subtitle">Track #${event.track_id} · ${label}${dwell}</div>
+        <div class="event-subtitle">
+          <span>Track #${event.track_id} · ${label}${dwell}</span>
+          ${direction}
+        </div>
       </div>
       <div class="event-meta">F${event.frame_index + 1}</div>
     </div>`;
@@ -1992,6 +2119,7 @@ function updateSidebar() {
     statsEl.innerHTML = "";
     classControlsEl.innerHTML = "";
     objectsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Open a replay JSON to begin.</div>';
+    renderEventControls(null);
     renderEventPanel(null);
     renderEventMarkers(null);
     return;
@@ -2092,6 +2220,7 @@ function updateSidebar() {
     }).join("");
   }
 
+  renderEventControls(bundle);
   renderEventPanel(bundle);
   renderEventMarkers(bundle);
 }
@@ -2186,6 +2315,7 @@ function setBundle(bundle) {
   state.referenceFrame = bundle.reference_frame || "sensor";
   state.classVisibility = {};
   state.eventTimeline = buildEventTimeline(bundle);
+  state.eventFilters = { type: "all", label: "all", rule: "all" };
   document.getElementById("inspect-panel").style.display = "none";
   initializeClassVisibility(bundle);
 
@@ -2363,6 +2493,29 @@ document.getElementById("event-list").addEventListener("click", (e) => {
   const jumpButton = e.target.closest(".event-jump");
   if (!jumpButton) return;
   jumpToEventByKey(jumpButton.dataset.eventKey);
+});
+
+document.getElementById("event-filter-type").addEventListener("change", (e) => {
+  state.eventFilters.type = e.target.value;
+  updateSidebar();
+});
+
+document.getElementById("event-filter-class").addEventListener("change", (e) => {
+  state.eventFilters.label = e.target.value;
+  updateSidebar();
+});
+
+document.getElementById("event-filter-rule").addEventListener("change", (e) => {
+  state.eventFilters.rule = e.target.value;
+  updateSidebar();
+});
+
+document.getElementById("btn-export-events-json").addEventListener("click", () => {
+  exportEventsAsJson();
+});
+
+document.getElementById("btn-export-events-csv").addEventListener("click", () => {
+  exportEventsAsCsv();
 });
 
 document.getElementById("frame-event-markers").addEventListener("click", (e) => {

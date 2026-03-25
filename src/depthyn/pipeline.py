@@ -16,7 +16,7 @@ from depthyn.pose import (
     transform_points,
 )
 from depthyn.perception.background import BackgroundModel
-from depthyn.rules import ZoneMonitor, load_zone_definitions
+from depthyn.rules import ZoneMonitor, load_rule_definitions
 from depthyn.scene import build_scene_state
 from depthyn.source.converted_csv import (
     discover_converted_csv_frames,
@@ -111,12 +111,12 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     detector = create_detector(config)
     detector_uses_foreground = _detector_uses_foreground(config, detector)
     pose_provider = _load_pose_provider(config)
-    zones = (
-        load_zone_definitions(config.zone_config)
+    zones, tripwires = (
+        load_rule_definitions(config.zone_config)
         if config.zone_config is not None
-        else []
+        else ([], [])
     )
-    zone_monitor = ZoneMonitor(zones) if zones else None
+    zone_monitor = ZoneMonitor(zones, tripwires) if zones or tripwires else None
     background_model = (
         BackgroundModel(
             cell_size_m=config.cluster_cell_size_m,
@@ -326,12 +326,14 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             "version": "v1",
             "object_source": "tracked_objects",
             "zone_shape": "axis_aligned_xy_rectangles",
+            "tripwire_shape": "directed_xy_segments",
         },
         "detector": config.detector.to_dict(),
         "config": config.to_dict(),
         "frames_processed": frame_count,
         "scene_bounds": _finalize_bounds(scene_min, scene_max),
         "zone_definitions": [zone.to_dict() for zone in zones],
+        "tripwire_definitions": [tripwire.to_dict() for tripwire in tripwires],
         "playback": {
             "median_frame_interval_ms": _median_frame_interval_ms(timestamp_ns_values),
         },

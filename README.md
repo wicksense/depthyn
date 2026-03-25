@@ -151,6 +151,37 @@ When a replay contains zone-driven scene events, the 3D viewer now shows:
 - event markers on the playback scrubber
 - track-focused review when you jump from an event
 
+### Replay with tripwires and exportable events
+
+```bash
+source .miniforge3/etc/profile.d/conda.sh
+conda activate depthyn-mmdet3d
+PYTHONPATH=src python -m depthyn.cli replay \
+  artifacts/session-inputs/20260317_094022 \
+  --source-type pcap \
+  --detector centerpoint-onnx \
+  --mode mobile \
+  --world-align \
+  --max-frames 40 \
+  --preview-points 5000 \
+  --detail-points 14000 \
+  --zone-config examples/zones/3-17-094022-demo.json \
+  --output artifacts/3-17-20260317_094022-centerpoint-dual-40f-rules.json
+```
+
+That demo config now includes both:
+- rectangular zones for `entered` / `dwell` / `exited`
+- directed tripwires for `crossed`
+
+In the 3D viewer, the `Events` panel also supports:
+- filtering by event type, class, and rule name
+- exporting the filtered event list as `JSON` or `CSV`
+
+Tripwire direction labels follow the configured directed segment:
+- `start_xy -> end_xy` defines the tripwire orientation
+- `positive_direction_label` is emitted when the crossing motion follows the segment's right-hand normal
+- `negative_direction_label` is emitted for the opposite crossing direction
+
 ### Evaluate against Gemini/Ouster logs
 
 ```bash
@@ -304,6 +335,7 @@ Top-level replay bundles also include:
 - scene bounds
 - playback timing
 - zone definitions
+- tripwire definitions
 - aggregate metrics
 - event summaries
 
@@ -330,7 +362,7 @@ Manual ML backend setup lives in [docs/mmdet3d_setup.md](docs/mmdet3d_setup.md).
 - `src/depthyn/detectors/`: pluggable detector backends
 - `src/depthyn/tracking/`: track management
 - `src/depthyn/scene/`: scene-state contracts
-- `src/depthyn/rules/`: zone rules and event generation
+- `src/depthyn/rules/`: zone rules, tripwires, and event generation
 - `viewer/`: browser replay UI (3D and 2D viewers)
 - `tools/`: model download and utility scripts
 - `docs/`: architecture and setup notes

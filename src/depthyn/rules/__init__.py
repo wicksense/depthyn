@@ -4,6 +4,8 @@ from depthyn.rules.zones import (
     ZoneEvent,
     ZoneMonitor,
     ZoneOccupancy,
+    TripwireDefinition,
+    load_rule_definitions,
     load_zone_definitions,
 )
 
@@ -13,5 +15,7 @@ __all__ = [
     "ZoneEvent",
     "ZoneMonitor",
     "ZoneOccupancy",
+    "TripwireDefinition",
+    "load_rule_definitions",
     "load_zone_definitions",
 ]
