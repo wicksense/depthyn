@@ -1053,6 +1053,50 @@ function ownedPointsForDetection(detectionId) {
   return state.pointOwnership.byDetectionId.get(detectionId) || [];
 }
 
+function inverseRotateXY(point, headingRad) {
+  const cos = Math.cos(-headingRad);
+  const sin = Math.sin(-headingRad);
+  return [
+    point[0] * cos - point[1] * sin,
+    point[0] * sin + point[1] * cos,
+    point[2],
+  ];
+}
+
+function sensorSpaceDetection(frame, detection) {
+  const pose = frame?.frame_pose;
+  if (!pose) return detection;
+  const [tx, ty, tz] = pose.position_m || [0, 0, 0];
+  const localCentroid = inverseRotateXY(
+    [
+      detection.centroid[0] - tx,
+      detection.centroid[1] - ty,
+      detection.centroid[2] - tz,
+    ],
+    pose.heading_rad || 0,
+  );
+  const sizeX = detection.bbox_max[0] - detection.bbox_min[0];
+  const sizeY = detection.bbox_max[1] - detection.bbox_min[1];
+  const sizeZ = detection.bbox_max[2] - detection.bbox_min[2];
+  return {
+    ...detection,
+    centroid: localCentroid,
+    bbox_min: [
+      localCentroid[0] - sizeX / 2,
+      localCentroid[1] - sizeY / 2,
+      localCentroid[2] - sizeZ / 2,
+    ],
+    bbox_max: [
+      localCentroid[0] + sizeX / 2,
+      localCentroid[1] + sizeY / 2,
+      localCentroid[2] + sizeZ / 2,
+    ],
+    heading_rad: detection.heading_rad == null
+      ? null
+      : detection.heading_rad - (pose.heading_rad || 0),
+  };
+}
+
 function assignScanlineOwner(sample, detections) {
   if (!detections?.length) return null;
   const point = [sample[2], sample[3], sample[4]];
@@ -1077,7 +1121,9 @@ function ownedScanlineSamplesForDetection(frame, detectionId) {
   if (!samples.length) return [];
   const detection = frame.detections.find((item) => item.detection_id === detectionId);
   if (!detection) return [];
-  const visibleDetections = frame.detections.filter((item) => isLabelVisible(item.label));
+  const visibleDetections = frame.detections
+    .filter((item) => isLabelVisible(item.label))
+    .map((item) => sensorSpaceDetection(frame, item));
   return samples.filter((sample) => {
     const owner = assignScanlineOwner(sample, visibleDetections);
     return owner?.detection_id === detectionId;
