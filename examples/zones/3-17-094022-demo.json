@@ -54,5 +54,45 @@
         "pedestrian"
       ]
     }
+  ],
+  "tripwires": [
+    {
+      "tripwire_id": "north-lane-line",
+      "name": "North Lane Crossing",
+      "start_xy": [
+        -4.0,
+        18.0
+      ],
+      "end_xy": [
+        4.0,
+        18.0
+      ],
+      "color": "#59b8ff",
+      "positive_direction_label": "southbound",
+      "negative_direction_label": "northbound",
+      "tags": [
+        "mobile",
+        "lane"
+      ]
+    },
+    {
+      "tripwire_id": "west-gate-line",
+      "name": "West Gate Crossing",
+      "start_xy": [
+        -4.0,
+        -2.0
+      ],
+      "end_xy": [
+        -4.0,
+        4.0
+      ],
+      "color": "#b07de8",
+      "positive_direction_label": "eastbound",
+      "negative_direction_label": "westbound",
+      "tags": [
+        "mobile",
+        "gate"
+      ]
+    }
   ]
 }

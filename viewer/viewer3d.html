@@ -101,6 +101,30 @@
       </section>
       <section id="events-panel">
         <h2>Events</h2>
+        <div id="event-controls">
+          <label class="filter-row">
+            <span>Type</span>
+            <select id="event-filter-type">
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label class="filter-row">
+            <span>Class</span>
+            <select id="event-filter-class">
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label class="filter-row">
+            <span>Rule</span>
+            <select id="event-filter-rule">
+              <option value="all">All</option>
+            </select>
+          </label>
+          <div class="event-actions">
+            <button id="btn-export-events-json" type="button">Export JSON</button>
+            <button id="btn-export-events-csv" type="button">Export CSV</button>
+          </div>
+        </div>
         <div id="event-list"></div>
       </section>
       <section id="overlays-panel">
