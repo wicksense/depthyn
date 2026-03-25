@@ -44,6 +44,7 @@ const state = {
   classVisibility: {},
   overlays: {
     rawPoints: true,
+    objectPoints: true,
     selectedPoints: true,
     boxes: true,
     trails: true,
@@ -127,6 +128,7 @@ createGroundGrid();
 // ─── Scene objects (rebuilt per frame) ───────────────────────────
 
 let pointCloud = null;
+let objectPointCloud = null;
 let highlightPointCloud = null;
 let boxGroup = new THREE.Group();
 let trailGroup = new THREE.Group();
@@ -165,11 +167,36 @@ const circleTexture = (() => {
 
 // ─── Point cloud ─────────────────────────────────────────────────
 
-function buildPointCloud(points, selectedVolume = null) {
+function assignPointOwner(point, detections) {
+  if (!detections?.length) return null;
+
+  let best = null;
+  let bestDist = Infinity;
+  for (const detection of detections) {
+    if (!pointInVolume(point, detection)) continue;
+    const dx = point[0] - detection.centroid[0];
+    const dy = point[1] - detection.centroid[1];
+    const dz = point[2] - detection.centroid[2];
+    const dist = dx * dx + dy * dy + dz * dz;
+    if (dist < bestDist) {
+      best = detection;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function buildPointCloud(points, detections = [], selectedInfo = null) {
   if (pointCloud) {
     scene.remove(pointCloud);
     pointCloud.geometry.dispose();
     pointCloud.material.dispose();
+  }
+  if (objectPointCloud) {
+    scene.remove(objectPointCloud);
+    objectPointCloud.geometry.dispose();
+    objectPointCloud.material.dispose();
+    objectPointCloud = null;
   }
   if (highlightPointCloud) {
     scene.remove(highlightPointCloud);
@@ -181,7 +208,11 @@ function buildPointCloud(points, selectedVolume = null) {
 
   const positions = new Float32Array(points.length * 3);
   const colors = new Float32Array(points.length * 3);
+  const objectPoints = [];
   const highlightPoints = [];
+  const visibleDetections = detections.filter((detection) => isLabelVisible(detection.label));
+  const selectedDetId = selectedInfo?.detection?.detection_id || null;
+  const selectedVolume = selectedInfo?.volume || null;
 
   let zMin = Infinity, zMax = -Infinity;
   for (const p of points) {
@@ -208,6 +239,16 @@ function buildPointCloud(points, selectedVolume = null) {
     colors[i * 3 + 1] = g;
     colors[i * 3 + 2] = b;
 
+    const owner = assignPointOwner(points[i], visibleDetections);
+    if (owner) {
+      const ownerColor = labelColor(owner.label);
+      objectPoints.push({
+        position: [px, py, pz],
+        color: ownerColor,
+        isSelected: owner.detection_id === selectedDetId,
+      });
+    }
+
     if (selectedVolume && pointInVolume(points[i], selectedVolume)) {
       highlightPoints.push([px, py, pz]);
     }
@@ -222,7 +263,7 @@ function buildPointCloud(points, selectedVolume = null) {
     sizeAttenuation: true,
     vertexColors: true,
     transparent: true,
-    opacity: selectedVolume ? 0.18 : 0.85,
+    opacity: selectedVolume ? 0.12 : (objectPoints.length ? 0.38 : 0.85),
     depthWrite: false,
     map: circleTexture,
     alphaMap: circleTexture,
@@ -231,6 +272,39 @@ function buildPointCloud(points, selectedVolume = null) {
 
   pointCloud = new THREE.Points(geometry, material);
   scene.add(pointCloud);
+
+  if (objectPoints.length) {
+    const ownedPositions = new Float32Array(objectPoints.length * 3);
+    const ownedColors = new Float32Array(objectPoints.length * 3);
+    for (let i = 0; i < objectPoints.length; i++) {
+      const owned = objectPoints[i];
+      ownedPositions[i * 3] = owned.position[0];
+      ownedPositions[i * 3 + 1] = owned.position[1];
+      ownedPositions[i * 3 + 2] = owned.position[2];
+
+      const intensity = selectedVolume ? (owned.isSelected ? 1.0 : 0.42) : 0.88;
+      ownedColors[i * 3] = owned.color.r * intensity;
+      ownedColors[i * 3 + 1] = owned.color.g * intensity;
+      ownedColors[i * 3 + 2] = owned.color.b * intensity;
+    }
+
+    const ownedGeometry = new THREE.BufferGeometry();
+    ownedGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ownedPositions, 3));
+    ownedGeometry.setAttribute("color", new THREE.Float32BufferAttribute(ownedColors, 3));
+    const ownedMaterial = new THREE.PointsMaterial({
+      size: selectedVolume ? 0.34 : 0.38,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: selectedVolume ? 0.35 : 0.92,
+      depthWrite: false,
+      map: circleTexture,
+      alphaMap: circleTexture,
+      alphaTest: 0.1,
+    });
+    objectPointCloud = new THREE.Points(ownedGeometry, ownedMaterial);
+    scene.add(objectPointCloud);
+  }
 
   if (highlightPoints.length) {
     const hiPositions = new Float32Array(highlightPoints.length * 3);
@@ -354,6 +428,9 @@ function applyFramePose(frame) {
 function applyOverlayVisibility() {
   if (pointCloud) {
     pointCloud.visible = state.overlays.rawPoints;
+  }
+  if (objectPointCloud) {
+    objectPointCloud.visible = state.overlays.objectPoints;
   }
   if (highlightPointCloud) {
     highlightPointCloud.visible = state.overlays.selectedPoints;
@@ -1088,6 +1165,7 @@ function buildLegend() {
   const el = document.getElementById("legend-list");
   const items = [
     ["Point cloud", "#8b6fbf"],
+    ["Object points", "#ffd48a"],
     ["Selected points", "#fff5b8"],
     ["Ego forward", "#ff6a3d"],
     ["Motion vector", "#ffdb7a"],
@@ -1107,6 +1185,7 @@ buildLegend();
 function initializeOverlayControls() {
   const pointToggles = [
     ["toggle-raw-points", "rawPoints"],
+    ["toggle-object-points", "objectPoints"],
     ["toggle-selected-points", "selectedPoints"],
     ["toggle-boxes", "boxes"],
     ["toggle-trails", "trails"],
@@ -1196,7 +1275,7 @@ function showFrame() {
   const selectedInfo = resolveSelectedObject(frame);
 
   applyFramePose(frame);
-  buildPointCloud(frame.preview_points, selectedInfo?.volume || null);
+  buildPointCloud(frame.preview_points, frame.detections, selectedInfo);
   buildBoxes(frame.detections, frame.active_tracks);
   buildTrails(state.bundle, state.frameIndex);
   buildMotionCue(frame, selectedInfo);
