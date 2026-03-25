@@ -43,6 +43,12 @@ const state = {
   selected: null,  // selected object id
   classVisibility: {},
   overlays: {
+    rawPoints: true,
+    selectedPoints: true,
+    boxes: true,
+    trails: true,
+    motionVector: true,
+    events: true,
     worldAxes: true,
     egoMarker: true,
   },
@@ -124,9 +130,13 @@ let pointCloud = null;
 let highlightPointCloud = null;
 let boxGroup = new THREE.Group();
 let trailGroup = new THREE.Group();
+let motionGroup = new THREE.Group();
+let eventGroup = new THREE.Group();
 let egoGroup = new THREE.Group();
 scene.add(boxGroup);
 scene.add(trailGroup);
+scene.add(motionGroup);
+scene.add(eventGroup);
 scene.add(egoGroup);
 
 const labelContainer = document.createElement("div");
@@ -342,6 +352,24 @@ function applyFramePose(frame) {
 }
 
 function applyOverlayVisibility() {
+  if (pointCloud) {
+    pointCloud.visible = state.overlays.rawPoints;
+  }
+  if (highlightPointCloud) {
+    highlightPointCloud.visible = state.overlays.selectedPoints;
+  }
+  if (boxGroup) {
+    boxGroup.visible = state.overlays.boxes;
+  }
+  if (trailGroup) {
+    trailGroup.visible = state.overlays.trails;
+  }
+  if (motionGroup) {
+    motionGroup.visible = state.overlays.motionVector;
+  }
+  if (eventGroup) {
+    eventGroup.visible = state.overlays.events;
+  }
   if (worldAxesGroup) {
     worldAxesGroup.visible = state.overlays.worldAxes;
   }
@@ -479,9 +507,11 @@ function buildTrails(bundle, frameIndex) {
   trailGroup.clear();
   if (!bundle) return;
 
+  const selectedInfo = resolveSelectedObject(bundle.frame_summaries[frameIndex]);
+  const selectedTrackId = selectedInfo?.track?.track_id ?? null;
   const history = new Map();
   const labelMap = new Map();
-  const start = Math.max(0, frameIndex - 30);
+  const start = Math.max(0, frameIndex - 120);
   for (let i = start; i <= frameIndex; i++) {
     const frame = bundle.frame_summaries[i];
     for (const track of frame.active_tracks) {
@@ -491,15 +521,14 @@ function buildTrails(bundle, frameIndex) {
     }
   }
 
-  const selectedInfo = resolveSelectedObject(bundle.frame_summaries[frameIndex]);
-
   for (const [trackId, trail] of history) {
     if (trail.length < 2) continue;
-    const points = trail.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+    const isSelected = selectedTrackId === trackId;
+    const visibleTrail = isSelected ? trail : trail.slice(-30);
+    const points = visibleTrail.map(p => new THREE.Vector3(p[0], p[1], p[2]));
     const trackLabel = labelMap.get(trackId) || "object";
     if (!isLabelVisible(trackLabel)) continue;
     const color = labelColor(trackLabel);
-    const isSelected = selectedInfo?.track?.track_id === trackId;
     const isDimmed = Boolean(selectedInfo) && !isSelected;
     const geo = new THREE.BufferGeometry().setFromPoints(points);
     const mat = new THREE.LineBasicMaterial({
@@ -509,6 +538,114 @@ function buildTrails(bundle, frameIndex) {
       linewidth: isSelected ? 2 : 1,
     });
     trailGroup.add(new THREE.Line(geo, mat));
+  }
+}
+
+function buildMotionCue(frame, selectedInfo) {
+  motionGroup.clear();
+  if (!frame || !selectedInfo?.track) return;
+
+  const track = selectedInfo.track;
+  const velocity = track.velocity_mps || [0, 0, 0];
+  const speed = Math.hypot(velocity[0], velocity[1], velocity[2]);
+  if (!Number.isFinite(speed) || speed < 0.05 || speed > 100) return;
+
+  const origin = new THREE.Vector3(
+    track.centroid[0],
+    track.centroid[1],
+    track.centroid[2] + 0.35,
+  );
+  const direction = new THREE.Vector3(velocity[0], velocity[1], velocity[2]).normalize();
+  const length = Math.min(10, Math.max(1.5, speed * 1.8));
+  const arrow = new THREE.ArrowHelper(
+    direction,
+    origin,
+    length,
+    0xffc95a,
+    Math.min(1.6, length * 0.22),
+    Math.min(0.9, length * 0.12),
+  );
+  motionGroup.add(arrow);
+
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([
+    origin,
+    origin.clone().add(direction.clone().multiplyScalar(length)),
+  ]);
+  const line = new THREE.Line(
+    lineGeo,
+    new THREE.LineBasicMaterial({
+      color: 0xffe08a,
+      transparent: true,
+      opacity: 0.85,
+    }),
+  );
+  motionGroup.add(line);
+
+  motionGroup.userData = {
+    labels: [
+      {
+        text: `${speed.toFixed(1)} m/s`,
+        color: "#ffdb7a",
+        pos: origin.clone().add(direction.clone().multiplyScalar(length + 0.7)),
+      },
+    ],
+  };
+}
+
+function zoneCenter(zone, zoneDefinitions) {
+  const definition = zoneDefinitions.get(zone.zone_id);
+  if (!definition) return [0, 0, 0.35];
+  const minXY = definition.min_xy || [0, 0];
+  const maxXY = definition.max_xy || [0, 0];
+  return [
+    (minXY[0] + maxXY[0]) / 2,
+    (minXY[1] + maxXY[1]) / 2,
+    0.35,
+  ];
+}
+
+function buildEvents(frame, bundle) {
+  eventGroup.clear();
+  eventGroup.userData = { labels: [] };
+  if (!frame?.scene_state?.events?.length) return;
+
+  const zoneDefinitions = new Map((bundle.zone_definitions || []).map((zone) => [zone.zone_id, zone]));
+  for (const event of frame.scene_state.events) {
+    const track = frame.active_tracks.find((item) => item.track_id === event.track_id);
+    const zone = frame.scene_state.zones?.find((item) => item.zone_id === event.zone_id);
+    const center = track
+      ? [track.centroid[0], track.centroid[1], Math.max(0.35, track.centroid[2] + 0.5)]
+      : zone
+        ? zoneCenter(zone, zoneDefinitions)
+        : [0, 0, 0.35];
+
+    const color = event.event_type === "dwell" ? 0xffd166 : event.event_type === "exited" ? 0xff6b6b : 0x7ee787;
+    const beaconGeo = new THREE.SphereGeometry(0.2, 12, 12);
+    const beaconMat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const beacon = new THREE.Mesh(beaconGeo, beaconMat);
+    beacon.position.set(center[0], center[1], center[2]);
+    eventGroup.add(beacon);
+
+    const poleGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(center[0], center[1], center[2] - 0.55),
+      new THREE.Vector3(center[0], center[1], center[2] + 0.55),
+    ]);
+    const poleMat = new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.55,
+    });
+    eventGroup.add(new THREE.Line(poleGeo, poleMat));
+
+    eventGroup.userData.labels.push({
+      text: `${event.zone_name}: ${event.event_type}`,
+      color: `#${color.toString(16).padStart(6, "0")}`,
+      pos: new THREE.Vector3(center[0], center[1], center[2] + 0.85),
+    });
   }
 }
 
@@ -563,6 +700,44 @@ function updateLabels() {
     el.style.color = item.color;
     el.textContent = item.text;
     labelContainer.appendChild(el);
+  }
+
+  if (state.overlays.motionVector) {
+    for (const item of motionGroup.userData?.labels || []) {
+      const projected = item.pos.clone().project(camera);
+      if (projected.z > 1) continue;
+
+      const x = projected.x * halfW + halfW;
+      const y = -projected.y * halfH + halfH;
+      if (x < -140 || x > window.innerWidth + 140 || y < -60 || y > window.innerHeight + 60) continue;
+
+      const el = document.createElement("div");
+      el.className = "label-3d label-ego";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      el.style.color = item.color;
+      el.textContent = item.text;
+      labelContainer.appendChild(el);
+    }
+  }
+
+  if (state.overlays.events) {
+    for (const item of eventGroup.userData?.labels || []) {
+      const projected = item.pos.clone().project(camera);
+      if (projected.z > 1) continue;
+
+      const x = projected.x * halfW + halfW;
+      const y = -projected.y * halfH + halfH;
+      if (x < -180 || x > window.innerWidth + 180 || y < -60 || y > window.innerHeight + 60) continue;
+
+      const el = document.createElement("div");
+      el.className = "label-3d label-ego";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      el.style.color = item.color;
+      el.textContent = item.text;
+      labelContainer.appendChild(el);
+    }
   }
 }
 
@@ -824,11 +999,13 @@ function updateSidebar() {
   const frameAxes = referenceFrame === "world"
     ? "+X east · +Y north"
     : "+X forward · +Y left";
+  const eventCount = frame.scene_state?.events?.length || 0;
   const rows = [
     ["Frame", `${state.frameIndex + 1} / ${bundle.frame_summaries.length}`],
     ["Points", frame.points_after_filtering],
     ["Detections", frame.detection_count],
     ["Tracks", frame.active_tracks.length],
+    ["Events", eventCount],
     ["Mode", bundle.config.mode],
     ["Reference", referenceFrame],
     ["Frame axes", frameAxes],
@@ -911,7 +1088,10 @@ function buildLegend() {
   const el = document.getElementById("legend-list");
   const items = [
     ["Point cloud", "#8b6fbf"],
+    ["Selected points", "#fff5b8"],
     ["Ego forward", "#ff6a3d"],
+    ["Motion vector", "#ffdb7a"],
+    ["Event marker", "#7ee787"],
     ["Car", COLORS.car.hex],
     ["Truck", COLORS.truck.hex],
     ["Pedestrian", COLORS.pedestrian.hex],
@@ -925,19 +1105,38 @@ function buildLegend() {
 buildLegend();
 
 function initializeOverlayControls() {
+  const pointToggles = [
+    ["toggle-raw-points", "rawPoints"],
+    ["toggle-selected-points", "selectedPoints"],
+    ["toggle-boxes", "boxes"],
+    ["toggle-trails", "trails"],
+    ["toggle-motion", "motionVector"],
+    ["toggle-events", "events"],
+  ];
   const worldAxesToggle = document.getElementById("toggle-world-axes");
   const egoMarkerToggle = document.getElementById("toggle-ego-marker");
 
+  for (const [id, key] of pointToggles) {
+    const toggle = document.getElementById(id);
+    toggle.checked = state.overlays[key];
+    toggle.addEventListener("change", (event) => {
+      state.overlays[key] = event.target.checked;
+      applyOverlayVisibility();
+      updateLabels();
+    });
+  }
   worldAxesToggle.checked = state.overlays.worldAxes;
   egoMarkerToggle.checked = state.overlays.egoMarker;
 
   worldAxesToggle.addEventListener("change", (event) => {
     state.overlays.worldAxes = event.target.checked;
     applyOverlayVisibility();
+    updateLabels();
   });
   egoMarkerToggle.addEventListener("change", (event) => {
     state.overlays.egoMarker = event.target.checked;
     applyOverlayVisibility();
+    updateLabels();
   });
 }
 initializeOverlayControls();
@@ -1000,6 +1199,9 @@ function showFrame() {
   buildPointCloud(frame.preview_points, selectedInfo?.volume || null);
   buildBoxes(frame.detections, frame.active_tracks);
   buildTrails(state.bundle, state.frameIndex);
+  buildMotionCue(frame, selectedInfo);
+  buildEvents(frame, state.bundle);
+  applyOverlayVisibility();
   updateSidebar();
 
   document.getElementById("frame-counter").textContent =
