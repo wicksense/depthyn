@@ -182,6 +182,23 @@ Tripwire direction labels follow the configured directed segment:
 - `positive_direction_label` is emitted when the crossing motion follows the segment's right-hand normal
 - `negative_direction_label` is emitted for the opposite crossing direction
 
+### Author zones and tripwires in the viewer
+
+The 3D viewer now includes a `Rules` panel for replay-first authoring:
+- `Add Zone`
+  - click two ground-plane corners in `Spatial`
+- `Add Tripwire`
+  - click a start point and an end point in `Spatial`
+- edit rule fields in the sidebar
+- export the current reference frame's rules as JSON
+
+Important behavior:
+- authoring is reference-frame aware
+  - `World` authoring is for GPS/world-aligned rule placement
+  - `Sensor` authoring is for sensor-local rule placement
+- `Scanline` is not an authoring mode
+- exported rule JSON is scoped to the currently selected reference frame
+
 ### Evaluate against Gemini/Ouster logs
 
 ```bash
