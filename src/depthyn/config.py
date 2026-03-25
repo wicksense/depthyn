@@ -44,6 +44,7 @@ class ReplayConfig:
     zone_config: Path | None = None
     max_frames: int | None = None
     preview_point_limit: int = 6000
+    detail_point_limit: int = 0
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     voxel_size_m: float = 0.3
     min_range_m: float = 1.0

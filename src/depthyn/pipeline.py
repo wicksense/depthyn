@@ -207,6 +207,10 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             preview_source,
             config.preview_point_limit,
         )
+        detail_points = _sample_preview_points(
+            preview_source,
+            config.detail_point_limit,
+        )
         active_track_payload = [track.to_dict() for track in active_tracks]
         scene_state = build_scene_state(
             frame_index=frame_index,
@@ -245,6 +249,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "foreground_points": len(working_points),
                 "detection_count": len(detections),
                 "preview_points": [list(point) for point in preview_points],
+                "detail_points": [list(point) for point in detail_points],
                 "detections": [detection.to_dict() for detection in detections],
                 "active_tracks": active_track_payload,
                 "scene_state": scene_state.to_dict(),
