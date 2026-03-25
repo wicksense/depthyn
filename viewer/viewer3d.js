@@ -215,6 +215,45 @@ function scanlinePointsForFrame(frame) {
   return frame?.scanline_points || [];
 }
 
+function spatialUsesSensorSamples(frame) {
+  const referenceFrame = state.bundle?.reference_frame || "sensor";
+  return referenceFrame === "sensor" && scanlinePointsForFrame(frame).length > 0;
+}
+
+function samplePosition(sample) {
+  return [sample[2], sample[3], sample[4]];
+}
+
+function sampleRange(sample) {
+  return sample[5];
+}
+
+function colorLerp(from, to, alpha) {
+  return [
+    from[0] + (to[0] - from[0]) * alpha,
+    from[1] + (to[1] - from[1]) * alpha,
+    from[2] + (to[2] - from[2]) * alpha,
+  ];
+}
+
+function sensorSampleBaseColor(frame, sample) {
+  const shape = scanlineShapeForFrame(frame);
+  const rowT = shape ? sample[0] / Math.max(1, shape[0] - 1) : 0.5;
+  const rangeT = Math.max(0, Math.min(1, sampleRange(sample) / 60));
+  const near = [0.98, 0.28, 0.36];
+  const mid = [0.78, 0.30, 0.62];
+  const far = [0.46, 0.34, 0.86];
+  const rangeMix = rangeT < 0.55
+    ? colorLerp(near, mid, rangeT / 0.55)
+    : colorLerp(mid, far, (rangeT - 0.55) / 0.45);
+  const lift = 0.06 + rowT * 0.12;
+  return [
+    Math.min(1, rangeMix[0] + lift * 0.35),
+    Math.min(1, rangeMix[1] + lift * 0.15),
+    Math.min(1, rangeMix[2] + lift * 0.55),
+  ];
+}
+
 function scanlineShapeForFrame(frame) {
   return frame?.scanline_shape || state.bundle?.scanline_metadata?.shape || null;
 }
@@ -303,7 +342,7 @@ function drawScanlineSampleSet(frame, samples, color, alpha, width, height, opti
   rangeCtx.globalAlpha = 1;
 }
 
-function buildPointCloud(displayPoints, ownershipPoints, detections = [], selectedInfo = null) {
+function buildPointCloud(frame, detections = [], selectedInfo = null) {
   if (pointCloud) {
     scene.remove(pointCloud);
     pointCloud.geometry.dispose();
@@ -327,6 +366,10 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
     highlightPointCloud.material.dispose();
     highlightPointCloud = null;
   }
+  const sensorSamples = spatialUsesSensorSamples(frame) ? scanlinePointsForFrame(frame) : [];
+  const displayPoints = sensorSamples.length ? sensorSamples.map(samplePosition) : rawPointsForFrame(frame);
+  const ownershipPoints = sensorSamples.length ? sensorSamples.map(samplePosition) : detailPointsForFrame(frame);
+
   if (!displayPoints?.length && !ownershipPoints?.length) {
     state.pointOwnership = { byDetectionId: new Map() };
     return;
@@ -342,14 +385,13 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
   const selectedVolume = selectedInfo?.volume || null;
 
   let zMin = Infinity, zMax = -Infinity;
-  for (const p of displayPoints) {
-    if (p[2] < zMin) zMin = p[2];
-    if (p[2] > zMax) zMax = p[2];
+  for (const point of displayPoints) {
+    if (point[2] < zMin) zMin = point[2];
+    if (point[2] > zMax) zMax = point[2];
   }
   const zSpan = Math.max(0.1, zMax - zMin);
 
-  // Add subtle jitter to break voxel grid pattern
-  const jitter = 0.08;
+  const jitter = sensorSamples.length ? 0.0 : 0.08;
   for (let i = 0; i < displayPoints.length; i++) {
     const px = displayPoints[i][0] + (Math.random() - 0.5) * jitter;
     const py = displayPoints[i][1] + (Math.random() - 0.5) * jitter;
@@ -358,22 +400,30 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
 
-    const t = (displayPoints[i][2] - zMin) / zSpan;
-    const r = 0.25 + t * 0.65;
-    const g = 0.15 + t * 0.20;
-    const b = 0.55 + (1 - t) * 0.25;
-    colors[i * 3]     = r;
-    colors[i * 3 + 1] = g;
-    colors[i * 3 + 2] = b;
+    if (sensorSamples.length) {
+      const [r, g, b] = sensorSampleBaseColor(frame, sensorSamples[i]);
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
+    } else {
+      const t = (displayPoints[i][2] - zMin) / zSpan;
+      const r = 0.25 + t * 0.65;
+      const g = 0.15 + t * 0.20;
+      const b = 0.55 + (1 - t) * 0.25;
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
+    }
   }
 
-  for (let i = 0; i < ownershipPoints.length; i++) {
-    const owner = assignPointOwner(ownershipPoints[i], visibleDetections);
+  const ownershipSourcePositions = sensorSamples.length ? sensorSamples.map(samplePosition) : ownershipPoints;
+  for (let i = 0; i < ownershipSourcePositions.length; i++) {
+    const owner = assignPointOwner(ownershipSourcePositions[i], visibleDetections);
     if (owner) {
       const ownerColor = labelColor(owner.label);
       const ownedPoint = {
-        position: [ownershipPoints[i][0], ownershipPoints[i][1], ownershipPoints[i][2]],
-        sourcePosition: ownershipPoints[i],
+        position: [ownershipSourcePositions[i][0], ownershipSourcePositions[i][1], ownershipSourcePositions[i][2]],
+        sourcePosition: ownershipSourcePositions[i],
         color: ownerColor,
         isSelected: owner.detection_id === selectedDetId,
       };
@@ -383,8 +433,8 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
       byDetectionId.set(owner.detection_id, existing);
     }
 
-    if (selectedVolume && pointInDetectionVolume(ownershipPoints[i], selectedVolume)) {
-      highlightPoints.push([ownershipPoints[i][0], ownershipPoints[i][1], ownershipPoints[i][2]]);
+    if (selectedVolume && pointInDetectionVolume(ownershipSourcePositions[i], selectedVolume)) {
+      highlightPoints.push([ownershipSourcePositions[i][0], ownershipSourcePositions[i][1], ownershipSourcePositions[i][2]]);
     }
   }
 
@@ -397,11 +447,13 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
 
   const material = new THREE.PointsMaterial({
-    size: 0.3,
+    size: sensorSamples.length ? 0.2 : 0.3,
     sizeAttenuation: true,
     vertexColors: true,
     transparent: true,
-    opacity: selectedVolume ? 0.12 : (objectPoints.length ? 0.38 : 0.85),
+    opacity: selectedVolume
+      ? (sensorSamples.length ? 0.22 : 0.12)
+      : (sensorSamples.length ? 0.48 : (objectPoints.length ? 0.38 : 0.85)),
     depthWrite: false,
     map: circleTexture,
     alphaMap: circleTexture,
@@ -436,11 +488,11 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
     silhouetteGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ownedPositions.slice(), 3));
     silhouetteGeometry.setAttribute("color", new THREE.Float32BufferAttribute(silhouetteColors, 3));
     const silhouetteMaterial = new THREE.PointsMaterial({
-      size: selectedVolume ? 0.92 : 0.78,
+      size: sensorSamples.length ? (selectedVolume ? 0.82 : 0.64) : (selectedVolume ? 0.92 : 0.78),
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
-      opacity: selectedVolume ? 0.34 : 0.18,
+      opacity: selectedVolume ? (sensorSamples.length ? 0.3 : 0.42) : (sensorSamples.length ? 0.24 : 0.18),
       depthWrite: false,
       map: circleTexture,
       alphaMap: circleTexture,
@@ -453,11 +505,11 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
     ownedGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ownedPositions, 3));
     ownedGeometry.setAttribute("color", new THREE.Float32BufferAttribute(ownedColors, 3));
     const ownedMaterial = new THREE.PointsMaterial({
-      size: selectedVolume ? 0.44 : 0.4,
+      size: sensorSamples.length ? (selectedVolume ? 0.32 : 0.28) : (selectedVolume ? 0.44 : 0.4),
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
-      opacity: selectedVolume ? 0.48 : 0.9,
+      opacity: selectedVolume ? (sensorSamples.length ? 0.82 : 0.72) : (sensorSamples.length ? 0.96 : 0.9),
       depthWrite: false,
       map: circleTexture,
       alphaMap: circleTexture,
@@ -483,7 +535,7 @@ function buildPointCloud(displayPoints, ownershipPoints, detections = [], select
     hiGeometry.setAttribute("position", new THREE.Float32BufferAttribute(hiPositions, 3));
     hiGeometry.setAttribute("color", new THREE.Float32BufferAttribute(hiColors, 3));
     const hiMaterial = new THREE.PointsMaterial({
-      size: 0.42,
+      size: sensorSamples.length ? 0.34 : 0.42,
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
@@ -661,7 +713,7 @@ function buildBoxes(detections, activeTracks) {
       color: isSelected ? 0xffefbf : threeColor,
       linewidth: isSelected ? 3 : 2,
       transparent: true,
-      opacity: isSelected ? 0.9 : (isDimmed ? 0.08 : 0.36),
+      opacity: isSelected ? 0.82 : (isDimmed ? 0.025 : 0.16),
     });
     const wireframe = new THREE.LineSegments(edges, lineMat);
     wireframe.position.set(cx, cy, cz);
@@ -674,7 +726,7 @@ function buildBoxes(detections, activeTracks) {
       const glowMat = new THREE.LineBasicMaterial({
         color: 0xffc95a,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.18,
       });
       const glow = new THREE.LineSegments(edges, glowMat);
       glow.position.set(cx, cy, cz);
@@ -707,7 +759,7 @@ function buildBoxes(detections, activeTracks) {
     const fillMat = new THREE.MeshBasicMaterial({
       color: isSelected ? 0xffc95a : threeColor,
       transparent: true,
-      opacity: isSelected ? 0.1 : (isDimmed ? 0.0 : 0.035),
+      opacity: isSelected ? 0.06 : 0.0,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -726,9 +778,9 @@ function buildBoxes(detections, activeTracks) {
     const poleMat = new THREE.LineBasicMaterial({
       color: isSelected ? 0xffc95a : threeColor,
       transparent: true,
-      opacity: isSelected ? 0.22 : (isDimmed ? 0.0 : 0.08),
+      opacity: isSelected ? 0.16 : 0.0,
     });
-    if (isSelected || !selectedInfo) {
+    if (isSelected) {
       boxGroup.add(new THREE.Line(poleGeo, poleMat));
     }
 
@@ -2005,11 +2057,8 @@ function showFrame() {
   if (!state.bundle) return;
   const frame = state.bundle.frame_summaries[state.frameIndex];
   const selectedInfo = resolveSelectedObject(frame);
-  const displayPoints = rawPointsForFrame(frame);
-  const ownershipPoints = detailPointsForFrame(frame);
-
   applyFramePose(frame);
-  buildPointCloud(displayPoints, ownershipPoints, frame.detections, selectedInfo);
+  buildPointCloud(frame, frame.detections, selectedInfo);
   buildBoxes(frame.detections, frame.active_tracks);
   buildTrails(state.bundle, state.frameIndex);
   buildMotionCue(frame, selectedInfo);
