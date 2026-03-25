@@ -89,6 +89,143 @@ function filteredEventTimeline() {
   });
 }
 
+function cloneZoneDefinition(zone) {
+  return {
+    zone_id: zone.zone_id,
+    name: zone.name,
+    min_xy: [...(zone.min_xy || [0, 0])],
+    max_xy: [...(zone.max_xy || [0, 0])],
+    kind: zone.kind || "inclusion",
+    color: zone.color || "#6f8f77",
+    dwell_alert_seconds: Number(zone.dwell_alert_seconds || 0),
+    tags: [...(zone.tags || [])],
+  };
+}
+
+function cloneTripwireDefinition(tripwire) {
+  return {
+    tripwire_id: tripwire.tripwire_id,
+    name: tripwire.name,
+    start_xy: [...(tripwire.start_xy || [0, 0])],
+    end_xy: [...(tripwire.end_xy || [0, 0])],
+    color: tripwire.color || "#59b8ff",
+    positive_direction_label: tripwire.positive_direction_label || "negative_to_positive",
+    negative_direction_label: tripwire.negative_direction_label || "positive_to_negative",
+    tags: [...(tripwire.tags || [])],
+  };
+}
+
+function emptyRuleState() {
+  return { zones: [], tripwires: [] };
+}
+
+function currentRuleState() {
+  const frame = currentReferenceFrame();
+  if (!state.ruleSets[frame]) {
+    state.ruleSets[frame] = emptyRuleState();
+  }
+  return state.ruleSets[frame];
+}
+
+function initializeRuleSets(bundle) {
+  const availableFrames = new Set(bundle?.available_reference_frames || [bundle?.reference_frame || "sensor"]);
+  state.ruleSets = {};
+  for (const frame of availableFrames) {
+    state.ruleSets[frame] = emptyRuleState();
+  }
+  const bundleFrame = bundle?.reference_frame || "sensor";
+  if (!state.ruleSets[bundleFrame]) {
+    state.ruleSets[bundleFrame] = emptyRuleState();
+  }
+  state.ruleSets[bundleFrame] = {
+    zones: (bundle?.zone_definitions || []).map(cloneZoneDefinition),
+    tripwires: (bundle?.tripwire_definitions || []).map(cloneTripwireDefinition),
+  };
+}
+
+function nextRuleId(kind) {
+  const rules = currentRuleState();
+  const items = kind === "zone" ? rules.zones : rules.tripwires;
+  const prefix = kind === "zone" ? "zone" : "tripwire";
+  return `${prefix}-${items.length + 1}`;
+}
+
+function roundPoint(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function startRuleDrawing(mode) {
+  state.authoring = { mode, points: [], hoverPoint: null };
+  stopPlayback();
+  buildRuleOverlays();
+  updateSidebar();
+}
+
+function cancelRuleDrawing() {
+  state.authoring = { mode: null, points: [], hoverPoint: null };
+  buildRuleOverlays();
+  updateSidebar();
+}
+
+function addAuthoredZone(pointA, pointB) {
+  const rules = currentRuleState();
+  rules.zones.push({
+    zone_id: nextRuleId("zone"),
+    name: `Zone ${rules.zones.length + 1}`,
+    min_xy: [roundPoint(Math.min(pointA[0], pointB[0])), roundPoint(Math.min(pointA[1], pointB[1]))],
+    max_xy: [roundPoint(Math.max(pointA[0], pointB[0])), roundPoint(Math.max(pointA[1], pointB[1]))],
+    kind: "inclusion",
+    color: "#6f8f77",
+    dwell_alert_seconds: 0,
+    tags: [],
+  });
+}
+
+function addAuthoredTripwire(pointA, pointB) {
+  const rules = currentRuleState();
+  rules.tripwires.push({
+    tripwire_id: nextRuleId("tripwire"),
+    name: `Tripwire ${rules.tripwires.length + 1}`,
+    start_xy: [roundPoint(pointA[0]), roundPoint(pointA[1])],
+    end_xy: [roundPoint(pointB[0]), roundPoint(pointB[1])],
+    color: "#59b8ff",
+    positive_direction_label: "negative_to_positive",
+    negative_direction_label: "positive_to_negative",
+    tags: [],
+  });
+}
+
+function commitRulePoint(point) {
+  if (!state.authoring.mode) return;
+  state.authoring.points.push(point);
+  if (state.authoring.mode === "zone" && state.authoring.points.length >= 2) {
+    addAuthoredZone(state.authoring.points[0], state.authoring.points[1]);
+    cancelRuleDrawing();
+    return;
+  }
+  if (state.authoring.mode === "tripwire" && state.authoring.points.length >= 2) {
+    addAuthoredTripwire(state.authoring.points[0], state.authoring.points[1]);
+    cancelRuleDrawing();
+    return;
+  }
+  buildRuleOverlays();
+  updateSidebar();
+}
+
+function exportRulesJson() {
+  const rules = currentRuleState();
+  const payload = {
+    reference_frame: currentReferenceFrame(),
+    zones: rules.zones.map(cloneZoneDefinition),
+    tripwires: rules.tripwires.map(cloneTripwireDefinition),
+  };
+  downloadText(
+    `depthyn-rules-${currentReferenceFrame()}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json",
+  );
+}
+
 // ─── State ───────────────────────────────────────────────────────
 
 const state = {
@@ -105,6 +242,12 @@ const state = {
     type: "all",
     label: "all",
     rule: "all",
+  },
+  ruleSets: {},
+  authoring: {
+    mode: null,
+    points: [],
+    hoverPoint: null,
   },
   pointOwnership: {
     byDetectionId: new Map(),
@@ -205,11 +348,13 @@ let trailGroup = new THREE.Group();
 let motionGroup = new THREE.Group();
 let eventGroup = new THREE.Group();
 let egoGroup = new THREE.Group();
+let ruleGroup = new THREE.Group();
 scene.add(boxGroup);
 scene.add(trailGroup);
 scene.add(motionGroup);
 scene.add(eventGroup);
 scene.add(egoGroup);
+scene.add(ruleGroup);
 
 const labelContainer = document.createElement("div");
 labelContainer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden;";
@@ -1024,6 +1169,121 @@ function buildEvents(frame, bundle) {
   }
 }
 
+function buildRuleOverlays() {
+  ruleGroup.clear();
+  ruleGroup.userData = { labels: [] };
+  if (!state.bundle || isScanlineMode()) return;
+
+  const rules = currentRuleState();
+  for (const zone of rules.zones) {
+    const minXY = zone.min_xy || [0, 0];
+    const maxXY = zone.max_xy || [0, 0];
+    const color = zone.color || "#6f8f77";
+    const corners = [
+      new THREE.Vector3(minXY[0], minXY[1], 0.06),
+      new THREE.Vector3(maxXY[0], minXY[1], 0.06),
+      new THREE.Vector3(maxXY[0], maxXY[1], 0.06),
+      new THREE.Vector3(minXY[0], maxXY[1], 0.06),
+      new THREE.Vector3(minXY[0], minXY[1], 0.06),
+    ];
+    const geometry = new THREE.BufferGeometry().setFromPoints(corners);
+    const line = new THREE.Line(
+      geometry,
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+    );
+    ruleGroup.add(line);
+
+    const fillGeometry = new THREE.PlaneGeometry(
+      Math.max(0.1, Math.abs(maxXY[0] - minXY[0])),
+      Math.max(0.1, Math.abs(maxXY[1] - minXY[1])),
+    );
+    const fill = new THREE.Mesh(
+      fillGeometry,
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.08, side: THREE.DoubleSide }),
+    );
+    fill.position.set((minXY[0] + maxXY[0]) / 2, (minXY[1] + maxXY[1]) / 2, 0.04);
+    ruleGroup.add(fill);
+
+    ruleGroup.userData.labels.push({
+      text: zone.name,
+      color,
+      pos: new THREE.Vector3((minXY[0] + maxXY[0]) / 2, (minXY[1] + maxXY[1]) / 2, 0.25),
+    });
+  }
+
+  for (const tripwire of rules.tripwires) {
+    const start = tripwire.start_xy || [0, 0];
+    const end = tripwire.end_xy || [0, 0];
+    const color = tripwire.color || "#59b8ff";
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(start[0], start[1], 0.08),
+        new THREE.Vector3(end[0], end[1], 0.08),
+      ]),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.92 }),
+    );
+    ruleGroup.add(line);
+
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const length = Math.max(0.001, Math.hypot(dx, dy));
+    const ux = dx / length;
+    const uy = dy / length;
+    const arrowBase = new THREE.Vector3(end[0] - ux * 0.9, end[1] - uy * 0.9, 0.08);
+    const perpX = -uy;
+    const perpY = ux;
+    const arrow = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(end[0], end[1], 0.08),
+        new THREE.Vector3(arrowBase.x + perpX * 0.25, arrowBase.y + perpY * 0.25, 0.08),
+        new THREE.Vector3(arrowBase.x - perpX * 0.25, arrowBase.y - perpY * 0.25, 0.08),
+        new THREE.Vector3(end[0], end[1], 0.08),
+      ]),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.92 }),
+    );
+    ruleGroup.add(arrow);
+
+    ruleGroup.userData.labels.push({
+      text: tripwire.name,
+      color,
+      pos: new THREE.Vector3((start[0] + end[0]) / 2, (start[1] + end[1]) / 2, 0.25),
+    });
+  }
+
+  if (state.authoring.mode && state.authoring.points.length) {
+    const start = state.authoring.points[0];
+    const end = state.authoring.hoverPoint || start;
+    const previewColor = state.authoring.mode === "zone" ? "#7ee787" : "#59b8ff";
+    if (state.authoring.mode === "zone") {
+      const corners = [
+        new THREE.Vector3(start[0], start[1], 0.09),
+        new THREE.Vector3(end[0], start[1], 0.09),
+        new THREE.Vector3(end[0], end[1], 0.09),
+        new THREE.Vector3(start[0], end[1], 0.09),
+        new THREE.Vector3(start[0], start[1], 0.09),
+      ];
+      ruleGroup.add(
+        new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(corners),
+          new THREE.LineDashedMaterial({ color: previewColor, dashSize: 0.4, gapSize: 0.2, transparent: true, opacity: 0.9 }),
+        ),
+      );
+      ruleGroup.children.at(-1)?.computeLineDistances?.();
+    } else {
+      ruleGroup.add(
+        new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(start[0], start[1], 0.09),
+            new THREE.Vector3(end[0], end[1], 0.09),
+          ]),
+          new THREE.LineDashedMaterial({ color: previewColor, dashSize: 0.4, gapSize: 0.2, transparent: true, opacity: 0.9 }),
+        ),
+      );
+      ruleGroup.children.at(-1)?.computeLineDistances?.();
+    }
+  }
+}
+
 // ─── Project 3D labels to screen ─────────────────────────────────
 
 function updateLabels() {
@@ -1114,6 +1374,23 @@ function updateLabels() {
       el.textContent = item.text;
       labelContainer.appendChild(el);
     }
+  }
+
+  for (const item of ruleGroup.userData?.labels || []) {
+    const projected = item.pos.clone().project(camera);
+    if (projected.z > 1) continue;
+
+    const x = projected.x * halfW + halfW;
+    const y = -projected.y * halfH + halfH;
+    if (x < -180 || x > window.innerWidth + 180 || y < -60 || y > window.innerHeight + 60) continue;
+
+    const el = document.createElement("div");
+    el.className = "label-3d label-ego";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.style.color = item.color;
+    el.textContent = item.text;
+    labelContainer.appendChild(el);
   }
 }
 
@@ -2099,6 +2376,70 @@ function renderEventPanel(bundle) {
   }).join("");
 }
 
+function renderRulePanel(bundle) {
+  const ruleListEl = document.getElementById("rule-list");
+  const statusEl = document.getElementById("rule-draw-status");
+  if (!ruleListEl || !statusEl) return;
+  if (!bundle) {
+    statusEl.textContent = "Open a replay JSON to start authoring.";
+    ruleListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No replay loaded.</div>';
+    return;
+  }
+
+  const rules = currentRuleState();
+  const reference = currentReferenceFrame();
+  if (state.authoring.mode === "zone") {
+    statusEl.textContent = state.authoring.points.length === 0
+      ? `Zone draw active in ${reference}. Click the first ground corner.`
+      : `Zone draw active in ${reference}. Click the opposite corner.`;
+  } else if (state.authoring.mode === "tripwire") {
+    statusEl.textContent = state.authoring.points.length === 0
+      ? `Tripwire draw active in ${reference}. Click the start point.`
+      : `Tripwire draw active in ${reference}. Click the end point.`;
+  } else {
+    statusEl.textContent = `${reference.charAt(0).toUpperCase() + reference.slice(1)} rules: ${rules.zones.length} zones, ${rules.tripwires.length} tripwires.`;
+  }
+
+  const cards = [];
+  for (const zone of rules.zones) {
+    cards.push(`
+      <div class="rule-card" data-rule-kind="zone" data-rule-id="${zone.zone_id}">
+        <div class="rule-card-header">
+          <span class="rule-kind-badge">Zone</span>
+          <button class="rule-delete" data-rule-kind="zone" data-rule-id="${zone.zone_id}">Delete</button>
+        </div>
+        <div class="rule-form">
+          <label><span>Name</span><input data-field="name" value="${zone.name}"></label>
+          <label><span>Color</span><input data-field="color" value="${zone.color}"></label>
+          <label><span>Dwell</span><input data-field="dwell_alert_seconds" type="number" min="0" step="0.1" value="${zone.dwell_alert_seconds ?? 0}"></label>
+        </div>
+        <div class="rule-geometry">min_xy: [${zone.min_xy.map((v) => v.toFixed(2)).join(", ")}] · max_xy: [${zone.max_xy.map((v) => v.toFixed(2)).join(", ")}]</div>
+      </div>
+    `);
+  }
+  for (const tripwire of rules.tripwires) {
+    cards.push(`
+      <div class="rule-card" data-rule-kind="tripwire" data-rule-id="${tripwire.tripwire_id}">
+        <div class="rule-card-header">
+          <span class="rule-kind-badge">Tripwire</span>
+          <button class="rule-delete" data-rule-kind="tripwire" data-rule-id="${tripwire.tripwire_id}">Delete</button>
+        </div>
+        <div class="rule-form">
+          <label><span>Name</span><input data-field="name" value="${tripwire.name}"></label>
+          <label><span>Color</span><input data-field="color" value="${tripwire.color}"></label>
+          <label><span>+</span><input data-field="positive_direction_label" value="${tripwire.positive_direction_label}"></label>
+          <label><span>-</span><input data-field="negative_direction_label" value="${tripwire.negative_direction_label}"></label>
+        </div>
+        <div class="rule-geometry">start_xy: [${tripwire.start_xy.map((v) => v.toFixed(2)).join(", ")}] · end_xy: [${tripwire.end_xy.map((v) => v.toFixed(2)).join(", ")}]</div>
+      </div>
+    `);
+  }
+
+  ruleListEl.innerHTML = cards.length
+    ? cards.join("")
+    : '<div style="color:var(--text-muted);font-size:12px;">No authored rules for this reference frame yet.</div>';
+}
+
 function jumpToEventByKey(eventKey) {
   const event = (state.eventTimeline || []).find((item) => item.key === eventKey);
   if (!event) return;
@@ -2119,6 +2460,7 @@ function updateSidebar() {
     statsEl.innerHTML = "";
     classControlsEl.innerHTML = "";
     objectsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Open a replay JSON to begin.</div>';
+    renderRulePanel(null);
     renderEventControls(null);
     renderEventPanel(null);
     renderEventMarkers(null);
@@ -2220,6 +2562,7 @@ function updateSidebar() {
     }).join("");
   }
 
+  renderRulePanel(bundle);
   renderEventControls(bundle);
   renderEventPanel(bundle);
   renderEventMarkers(bundle);
@@ -2316,6 +2659,8 @@ function setBundle(bundle) {
   state.classVisibility = {};
   state.eventTimeline = buildEventTimeline(bundle);
   state.eventFilters = { type: "all", label: "all", rule: "all" };
+  initializeRuleSets(bundle);
+  cancelRuleDrawing();
   document.getElementById("inspect-panel").style.display = "none";
   initializeClassVisibility(bundle);
 
@@ -2350,6 +2695,7 @@ function showFrame() {
   buildTrails(state.bundle, state.frameIndex);
   buildMotionCue(frame, selectedInfo);
   buildEvents(frame, state.bundle);
+  buildRuleOverlays();
   applyOverlayVisibility();
   updateSidebar();
   renderRangeView(frame, selectedInfo);
@@ -2384,6 +2730,18 @@ function setFrameIndex(idx) {
   if (!state.bundle) return;
   state.frameIndex = Math.max(0, Math.min(state.bundle.frame_summaries.length - 1, idx));
   showFrame();
+}
+
+function pointOnGroundPlane(clientX, clientY) {
+  mouse.x = (clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const target = new THREE.Vector3();
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  if (!raycaster.ray.intersectPlane(plane, target)) {
+    return null;
+  }
+  return [roundPoint(target.x), roundPoint(target.y), 0];
 }
 
 // ─── Playback ───────────────────────────────────────────────────
@@ -2444,6 +2802,7 @@ document.getElementById("btn-view-scanline").addEventListener("click", () => {
 
 document.getElementById("btn-ref-sensor").addEventListener("click", () => {
   if (!state.bundle) return;
+  cancelRuleDrawing();
   state.referenceFrame = "sensor";
   updateReferenceFrameUI();
   updateViewModeUI();
@@ -2454,6 +2813,7 @@ document.getElementById("btn-ref-world").addEventListener("click", () => {
   if (!state.bundle) return;
   const available = new Set(state.bundle.available_reference_frames || []);
   if (!available.has("world")) return;
+  cancelRuleDrawing();
   state.referenceFrame = "world";
   updateReferenceFrameUI();
   updateViewModeUI();
@@ -2518,6 +2878,61 @@ document.getElementById("btn-export-events-csv").addEventListener("click", () =>
   exportEventsAsCsv();
 });
 
+document.getElementById("btn-add-zone").addEventListener("click", () => {
+  if (!state.bundle) return;
+  if (isScanlineMode()) {
+    state.viewMode = "spatial";
+    updateViewModeUI();
+  }
+  startRuleDrawing("zone");
+});
+
+document.getElementById("btn-add-tripwire").addEventListener("click", () => {
+  if (!state.bundle) return;
+  if (isScanlineMode()) {
+    state.viewMode = "spatial";
+    updateViewModeUI();
+  }
+  startRuleDrawing("tripwire");
+});
+
+document.getElementById("btn-cancel-rule-draw").addEventListener("click", () => {
+  cancelRuleDrawing();
+  showFrame();
+});
+
+document.getElementById("btn-export-rules-json").addEventListener("click", () => {
+  if (!state.bundle) return;
+  exportRulesJson();
+});
+
+document.getElementById("rule-list").addEventListener("input", (e) => {
+  const card = e.target.closest(".rule-card");
+  const input = e.target.closest("input[data-field]");
+  if (!card || !input) return;
+  const rules = currentRuleState();
+  const collection = card.dataset.ruleKind === "zone" ? rules.zones : rules.tripwires;
+  const idField = card.dataset.ruleKind === "zone" ? "zone_id" : "tripwire_id";
+  const item = collection.find((entry) => String(entry[idField]) === card.dataset.ruleId);
+  if (!item) return;
+  item[input.dataset.field] = input.type === "number" ? Number(input.value || 0) : input.value;
+  buildRuleOverlays();
+  updateSidebar();
+});
+
+document.getElementById("rule-list").addEventListener("click", (e) => {
+  const button = e.target.closest(".rule-delete");
+  if (!button) return;
+  const rules = currentRuleState();
+  if (button.dataset.ruleKind === "zone") {
+    rules.zones = rules.zones.filter((zone) => zone.zone_id !== button.dataset.ruleId);
+  } else {
+    rules.tripwires = rules.tripwires.filter((tripwire) => tripwire.tripwire_id !== button.dataset.ruleId);
+  }
+  buildRuleOverlays();
+  updateSidebar();
+});
+
 document.getElementById("frame-event-markers").addEventListener("click", (e) => {
   const marker = e.target.closest(".event-marker");
   if (!marker) return;
@@ -2532,12 +2947,29 @@ renderer.domElement.addEventListener("mousedown", (e) => {
   mouseDownPos = { x: e.clientX, y: e.clientY };
 });
 
+renderer.domElement.addEventListener("mousemove", (e) => {
+  if (!state.authoring.mode || isScanlineMode()) return;
+  state.authoring.hoverPoint = pointOnGroundPlane(e.clientX, e.clientY);
+  buildRuleOverlays();
+  updateLabels();
+});
+
 renderer.domElement.addEventListener("mouseup", (e) => {
   if (!state.bundle || !mouseDownPos) return;
 
   const dx = e.clientX - mouseDownPos.x;
   const dy = e.clientY - mouseDownPos.y;
   if (dx * dx + dy * dy > 9) return; // moved more than 3px = drag, not click
+
+  if (state.authoring.mode && !isScanlineMode()) {
+    const point = pointOnGroundPlane(e.clientX, e.clientY);
+    if (point) {
+      commitRulePoint(point);
+      showFrame();
+      mouseDownPos = null;
+      return;
+    }
+  }
 
   mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
