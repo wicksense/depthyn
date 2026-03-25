@@ -309,6 +309,12 @@ canvas { display: block; }
   gap: 8px;
 }
 
+#layer-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;
@@ -320,6 +326,13 @@ canvas { display: block; }
 
 .toggle-row input {
   accent-color: var(--accent);
+}
+
+.toggle-row span:last-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
 }
 
 /* ── 3D label sprites ────────────────────────────────── */
