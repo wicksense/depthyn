@@ -197,7 +197,16 @@ function assignPointOwner(point, detections) {
   return best;
 }
 
-function buildPointCloud(points, detections = [], selectedInfo = null) {
+function rawPointsForFrame(frame) {
+  return frame?.preview_points || [];
+}
+
+function detailPointsForFrame(frame) {
+  const detail = frame?.detail_points || [];
+  return detail.length ? detail : rawPointsForFrame(frame);
+}
+
+function buildPointCloud(displayPoints, ownershipPoints, detections = [], selectedInfo = null) {
   if (pointCloud) {
     scene.remove(pointCloud);
     pointCloud.geometry.dispose();
@@ -221,10 +230,13 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
     highlightPointCloud.material.dispose();
     highlightPointCloud = null;
   }
-  if (!points || !points.length) return;
+  if (!displayPoints?.length && !ownershipPoints?.length) {
+    state.pointOwnership = { byDetectionId: new Map() };
+    return;
+  }
 
-  const positions = new Float32Array(points.length * 3);
-  const colors = new Float32Array(points.length * 3);
+  const positions = new Float32Array(displayPoints.length * 3);
+  const colors = new Float32Array(displayPoints.length * 3);
   const objectPoints = [];
   const highlightPoints = [];
   const byDetectionId = new Map();
@@ -233,7 +245,7 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
   const selectedVolume = selectedInfo?.volume || null;
 
   let zMin = Infinity, zMax = -Infinity;
-  for (const p of points) {
+  for (const p of displayPoints) {
     if (p[2] < zMin) zMin = p[2];
     if (p[2] > zMax) zMax = p[2];
   }
@@ -241,28 +253,30 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
 
   // Add subtle jitter to break voxel grid pattern
   const jitter = 0.08;
-  for (let i = 0; i < points.length; i++) {
-    const px = points[i][0] + (Math.random() - 0.5) * jitter;
-    const py = points[i][1] + (Math.random() - 0.5) * jitter;
-    const pz = points[i][2] + (Math.random() - 0.5) * jitter;
+  for (let i = 0; i < displayPoints.length; i++) {
+    const px = displayPoints[i][0] + (Math.random() - 0.5) * jitter;
+    const py = displayPoints[i][1] + (Math.random() - 0.5) * jitter;
+    const pz = displayPoints[i][2] + (Math.random() - 0.5) * jitter;
     positions[i * 3] = px;
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
 
-    const t = (points[i][2] - zMin) / zSpan;
+    const t = (displayPoints[i][2] - zMin) / zSpan;
     const r = 0.25 + t * 0.65;
     const g = 0.15 + t * 0.20;
     const b = 0.55 + (1 - t) * 0.25;
     colors[i * 3]     = r;
     colors[i * 3 + 1] = g;
     colors[i * 3 + 2] = b;
+  }
 
-    const owner = assignPointOwner(points[i], visibleDetections);
+  for (let i = 0; i < ownershipPoints.length; i++) {
+    const owner = assignPointOwner(ownershipPoints[i], visibleDetections);
     if (owner) {
       const ownerColor = labelColor(owner.label);
       const ownedPoint = {
-        position: [points[i][0], points[i][1], points[i][2]],
-        sourcePosition: points[i],
+        position: [ownershipPoints[i][0], ownershipPoints[i][1], ownershipPoints[i][2]],
+        sourcePosition: ownershipPoints[i],
         color: ownerColor,
         isSelected: owner.detection_id === selectedDetId,
       };
@@ -272,8 +286,8 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
       byDetectionId.set(owner.detection_id, existing);
     }
 
-    if (selectedVolume && pointInDetectionVolume(points[i], selectedVolume)) {
-      highlightPoints.push([points[i][0], points[i][1], points[i][2]]);
+    if (selectedVolume && pointInDetectionVolume(ownershipPoints[i], selectedVolume)) {
+      highlightPoints.push([ownershipPoints[i][0], ownershipPoints[i][1], ownershipPoints[i][2]]);
     }
   }
 
@@ -1192,7 +1206,7 @@ function renderRangeView(frame, selectedInfo) {
   rangeCtx.fillRect(0, 0, width, height);
   drawRangeGrid(width, height);
 
-  const points = frame.preview_points || [];
+  const points = detailPointsForFrame(frame);
   const extents = rangeFrameExtents(points);
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
   const visibleDetections = frame.detections.filter((detection) => isLabelVisible(detection.label));
@@ -1230,7 +1244,7 @@ function renderRangeView(frame, selectedInfo) {
   rangeCtx.fillStyle = "rgba(212, 216, 228, 0.76)";
   rangeCtx.font = "600 12px Inter, sans-serif";
   rangeCtx.fillText("Full-frame scanline view", 18, 24);
-  rangeCtx.fillText(`${points.length} preview pts`, width - 126, 24);
+  rangeCtx.fillText(`${points.length} pts`, width - 86, 24);
 }
 
 function updateViewModeUI() {
@@ -1592,9 +1606,11 @@ function showFrame() {
   if (!state.bundle) return;
   const frame = state.bundle.frame_summaries[state.frameIndex];
   const selectedInfo = resolveSelectedObject(frame);
+  const displayPoints = rawPointsForFrame(frame);
+  const ownershipPoints = detailPointsForFrame(frame);
 
   applyFramePose(frame);
-  buildPointCloud(frame.preview_points, frame.detections, selectedInfo);
+  buildPointCloud(displayPoints, ownershipPoints, frame.detections, selectedInfo);
   buildBoxes(frame.detections, frame.active_tracks);
   buildTrails(state.bundle, state.frameIndex);
   buildMotionCue(frame, selectedInfo);

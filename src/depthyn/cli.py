@@ -266,6 +266,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum downsampled points per frame to embed for viewer playback.",
     )
     replay_parser.add_argument(
+        "--detail-points",
+        type=int,
+        default=0,
+        help="Optional higher-detail point budget per frame for richer object/scanline viewing.",
+    )
+    replay_parser.add_argument(
         "--zone-config",
         type=Path,
         default=None,
@@ -691,6 +697,7 @@ def main(argv: list[str] | None = None) -> int:
             zone_config=args.zone_config,
             max_frames=args.max_frames,
             preview_point_limit=args.preview_points,
+            detail_point_limit=args.detail_points,
             detector=_build_detector_config(
                 args.detector,
                 args.mmdet3d_python,
