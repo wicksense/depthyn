@@ -37,9 +37,12 @@ function isScanlineMode() {
   return state.viewMode === "scanline";
 }
 
+function currentReferenceFrame() {
+  return state.referenceFrame || state.bundle?.reference_frame || "sensor";
+}
+
 function scanlineModeSupported() {
-  const referenceFrame = state.bundle?.reference_frame || "sensor";
-  return referenceFrame !== "world";
+  return currentReferenceFrame() === "sensor";
 }
 
 // ─── State ───────────────────────────────────────────────────────
@@ -51,6 +54,7 @@ const state = {
   timer: null,
   selected: null,  // selected object id
   viewMode: "spatial",
+  referenceFrame: "sensor",
   classVisibility: {},
   pointOwnership: {
     byDetectionId: new Map(),
@@ -203,12 +207,38 @@ function assignPointOwner(point, detections) {
 }
 
 function rawPointsForFrame(frame) {
-  return frame?.preview_points || [];
+  if (!frame) return [];
+  if (currentReferenceFrame() === "sensor") {
+    return frame.sensor_preview_points || frame.preview_points || [];
+  }
+  return frame.preview_points || [];
 }
 
 function detailPointsForFrame(frame) {
-  const detail = frame?.detail_points || [];
+  const detail = currentReferenceFrame() === "sensor"
+    ? (frame?.sensor_detail_points || frame?.detail_points || [])
+    : (frame?.detail_points || []);
   return detail.length ? detail : rawPointsForFrame(frame);
+}
+
+function detectionsForFrame(frame) {
+  if (!frame) return [];
+  if (currentReferenceFrame() === "sensor") {
+    return frame.sensor_detections || frame.detections || [];
+  }
+  return frame.detections || [];
+}
+
+function activeTracksForFrame(frame) {
+  if (!frame) return [];
+  if (currentReferenceFrame() === "sensor") {
+    return frame.sensor_active_tracks || frame.active_tracks || [];
+  }
+  return frame.active_tracks || [];
+}
+
+function framePoseForCurrentReference(frame) {
+  return currentReferenceFrame() === "world" ? frame?.frame_pose : null;
 }
 
 function scanlinePointsForFrame(frame) {
@@ -216,7 +246,7 @@ function scanlinePointsForFrame(frame) {
 }
 
 function spatialUsesSensorSamples(frame) {
-  const referenceFrame = state.bundle?.reference_frame || "sensor";
+  const referenceFrame = currentReferenceFrame();
   return referenceFrame === "sensor" && scanlinePointsForFrame(frame).length > 0;
 }
 
@@ -627,7 +657,7 @@ function buildEgoMarker() {
 }
 
 function applyFramePose(frame) {
-  const pose = frame?.frame_pose;
+  const pose = framePoseForCurrentReference(frame);
   if (!pose) {
     egoGroup.position.set(0, 0, 0);
     egoGroup.rotation.set(0, 0, 0);
@@ -809,7 +839,7 @@ function buildTrails(bundle, frameIndex) {
   const start = Math.max(0, frameIndex - 120);
   for (let i = start; i <= frameIndex; i++) {
     const frame = bundle.frame_summaries[i];
-    for (const track of frame.active_tracks) {
+    for (const track of activeTracksForFrame(frame)) {
       if (!history.has(track.track_id)) history.set(track.track_id, []);
       history.get(track.track_id).push(track.centroid);
       if (track.label) labelMap.set(track.track_id, track.label);
@@ -906,7 +936,7 @@ function buildEvents(frame, bundle) {
 
   const zoneDefinitions = new Map((bundle.zone_definitions || []).map((zone) => [zone.zone_id, zone]));
   for (const event of frame.scene_state.events) {
-    const track = frame.active_tracks.find((item) => item.track_id === event.track_id);
+    const track = activeTracksForFrame(frame).find((item) => item.track_id === event.track_id);
     const zone = frame.scene_state.zones?.find((item) => item.zone_id === event.zone_id);
     const center = track
       ? [track.centroid[0], track.centroid[1], Math.max(0.35, track.centroid[2] + 0.5)]
@@ -1372,11 +1402,12 @@ function assignScanlineOwner(sample, detections) {
 function ownedScanlineSamplesForDetection(frame, detectionId) {
   const samples = scanlinePointsForFrame(frame);
   if (!samples.length) return [];
-  const detection = frame.detections.find((item) => item.detection_id === detectionId);
+  const frameDetections = detectionsForFrame(frame);
+  const detection = frameDetections.find((item) => item.detection_id === detectionId);
   if (!detection) return [];
-  const visibleDetections = frame.detections
+  const visibleDetections = frameDetections
     .filter((item) => isLabelVisible(item.label))
-    .map((item) => sensorSpaceDetection(frame, item));
+    .map((item) => currentReferenceFrame() === "world" ? sensorSpaceDetection(frame, item) : item);
   return samples.filter((sample) => {
     const owner = assignScanlineOwner(sample, visibleDetections);
     return owner?.detection_id === detectionId;
@@ -1539,7 +1570,7 @@ function drawRangeDetections(frame, width, height, extents, selectedInfo) {
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
   const scanlineSamples = scanlinePointsForFrame(frame);
   const scanShape = scanlineShapeForFrame(frame);
-  for (const detection of frame.detections) {
+  for (const detection of detectionsForFrame(frame)) {
     if (!isLabelVisible(detection.label)) continue;
     const isSelected = detection.detection_id === selectedDetId;
     const color = isSelected ? "#fff0c2" : labelColor(detection.label).hex;
@@ -1619,7 +1650,7 @@ function renderRangeView(frame, selectedInfo) {
   const scanShape = scanlineShapeForFrame(frame);
   const extents = rangeFrameExtents(points);
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
-  const visibleDetections = frame.detections.filter((detection) => isLabelVisible(detection.label));
+  const visibleDetections = detectionsForFrame(frame).filter((detection) => isLabelVisible(detection.label));
 
   if (state.overlays.rawPoints) {
     if (scanlineSamples.length && scanShape) {
@@ -1698,6 +1729,21 @@ function updateViewModeUI() {
   labelContainer.style.display = spatialActive ? "block" : "none";
 }
 
+function updateReferenceFrameUI() {
+  const sensorButton = document.getElementById("btn-ref-sensor");
+  const worldButton = document.getElementById("btn-ref-world");
+  const available = new Set(state.bundle?.available_reference_frames || ["sensor"]);
+  const current = currentReferenceFrame();
+
+  sensorButton.disabled = !available.has("sensor");
+  worldButton.disabled = !available.has("world");
+  sensorButton.classList.toggle("is-active", current === "sensor");
+  worldButton.classList.toggle("is-active", current === "world");
+  worldButton.title = available.has("world")
+    ? ""
+    : "World view is only available for replays generated with GPS world alignment.";
+}
+
 function findMatchedTrackForDetection(detection, tracks) {
   if (!tracks?.length) return null;
   let best = null;
@@ -1732,21 +1778,23 @@ function findMatchedDetectionForTrack(track, detections) {
 
 function resolveSelectedObject(frame) {
   if (!frame || !state.selected) return null;
+  const frameDetections = detectionsForFrame(frame);
+  const frameTracks = activeTracksForFrame(frame);
 
   if (state.selected.kind === "detection") {
-    const detection = frame.detections.find((item) => item.detection_id === state.selected.id);
+    const detection = frameDetections.find((item) => item.detection_id === state.selected.id);
     if (!detection) return null;
     return {
       detection,
-      track: findMatchedTrackForDetection(detection, frame.active_tracks),
+      track: findMatchedTrackForDetection(detection, frameTracks),
       volume: detection,
     };
   }
 
   if (state.selected.kind === "track") {
-    const track = frame.active_tracks.find((item) => item.track_id === state.selected.id);
+    const track = frameTracks.find((item) => item.track_id === state.selected.id);
     if (!track) return null;
-    const detection = findMatchedDetectionForTrack(track, frame.detections);
+    const detection = findMatchedDetectionForTrack(track, frameDetections);
     return {
       detection,
       track,
@@ -1799,7 +1847,7 @@ function showTrackPanel(track) {
   panel.style.display = "block";
 
   const currentFrame = state.bundle?.frame_summaries?.[state.frameIndex];
-  const matchedDetection = findMatchedDetectionForTrack(track, currentFrame?.detections || []);
+  const matchedDetection = findMatchedDetectionForTrack(track, detectionsForFrame(currentFrame));
   const structuredSamples = matchedDetection && currentFrame
     ? ownedScanlineSamplesForDetection(currentFrame, matchedDetection.detection_id)
     : [];
@@ -1823,7 +1871,7 @@ function selectObject(selection) {
     return;
   }
   if (selectedInfo?.detection) {
-    showInspectPanel(selectedInfo.detection, frame?.active_tracks || []);
+    showInspectPanel(selectedInfo.detection, activeTracksForFrame(frame));
   } else if (selectedInfo?.track) {
     showTrackPanel(selectedInfo.track);
   } else {
@@ -1852,16 +1900,18 @@ function updateSidebar() {
 
   statusEl.textContent = `${bundle.frames_processed} frames · ${bundle.metrics.detector_name || "baseline"}`;
 
-  const referenceFrame = bundle.reference_frame || "sensor";
+  const referenceFrame = currentReferenceFrame();
   const frameAxes = referenceFrame === "world"
     ? "+X east · +Y north"
     : "+X forward · +Y left";
   const eventCount = frame.scene_state?.events?.length || 0;
+  const frameDetections = detectionsForFrame(frame);
+  const frameTracks = activeTracksForFrame(frame);
   const rows = [
     ["Frame", `${state.frameIndex + 1} / ${bundle.frame_summaries.length}`],
     ["Points", frame.points_after_filtering],
     ["Detections", frame.detection_count],
-    ["Tracks", frame.active_tracks.length],
+    ["Tracks", frameTracks.length],
     ["Events", eventCount],
     ["Mode", bundle.config.mode],
     ["Reference", referenceFrame],
@@ -1875,11 +1925,11 @@ function updateSidebar() {
   ).join("");
 
   const classCounts = new Map();
-  for (const det of frame.detections) {
+  for (const det of frameDetections) {
     const key = normalizedLabel(det.label);
     classCounts.set(key, (classCounts.get(key) || 0) + 1);
   }
-  for (const track of frame.active_tracks) {
+  for (const track of frameTracks) {
     const key = normalizedLabel(track.label);
     classCounts.set(key, (classCounts.get(key) || 0) + 1);
   }
@@ -1897,7 +1947,7 @@ function updateSidebar() {
 
   // Object cards: detections first, then tracks
   const items = [];
-  for (const det of frame.detections) {
+  for (const det of frameDetections) {
     if (!isLabelVisible(det.label)) continue;
     items.push({
       type: "det",
@@ -1907,7 +1957,7 @@ function updateSidebar() {
       color: labelColor(det.label).hex,
     });
   }
-  for (const track of frame.active_tracks) {
+  for (const track of frameTracks) {
     const trackLabel = track.label || "object";
     if (!isLabelVisible(trackLabel)) continue;
     const trackColor = labelColor(trackLabel);
@@ -2010,10 +2060,10 @@ function initializeClassVisibility(bundle) {
     labels.add(normalizedLabel(label));
   }
   for (const frame of bundle?.frame_summaries || []) {
-    for (const det of frame.detections || []) {
+    for (const det of frame.sensor_detections || frame.detections || []) {
       labels.add(normalizedLabel(det.label));
     }
-    for (const track of frame.active_tracks || []) {
+    for (const track of frame.sensor_active_tracks || frame.active_tracks || []) {
       labels.add(normalizedLabel(track.label));
     }
   }
@@ -2031,6 +2081,7 @@ function setBundle(bundle) {
   state.frameIndex = 0;
   stopPlayback();
   state.selected = null;
+  state.referenceFrame = bundle.reference_frame || "sensor";
   state.classVisibility = {};
   document.getElementById("inspect-panel").style.display = "none";
   initializeClassVisibility(bundle);
@@ -2048,6 +2099,7 @@ function setBundle(bundle) {
   camera.position.set(cx, cy - 50, 40);
   buildEgoMarker();
   applyOverlayVisibility();
+  updateReferenceFrameUI();
   updateViewModeUI();
 
   showFrame();
@@ -2057,9 +2109,11 @@ function showFrame() {
   if (!state.bundle) return;
   const frame = state.bundle.frame_summaries[state.frameIndex];
   const selectedInfo = resolveSelectedObject(frame);
+  const frameDetections = detectionsForFrame(frame);
+  const frameTracks = activeTracksForFrame(frame);
   applyFramePose(frame);
-  buildPointCloud(frame, frame.detections, selectedInfo);
-  buildBoxes(frame.detections, frame.active_tracks);
+  buildPointCloud(frame, frameDetections, selectedInfo);
+  buildBoxes(frameDetections, frameTracks);
   buildTrails(state.bundle, state.frameIndex);
   buildMotionCue(frame, selectedInfo);
   buildEvents(frame, state.bundle);
@@ -2074,7 +2128,7 @@ function showFrame() {
       renderInspectScanline(ownedPointsForDetection(selectedInfo.detection.detection_id), selectedInfo.detection.label);
     }
   } else if (selectedInfo?.track) {
-    const matchedDetection = findMatchedDetectionForTrack(selectedInfo.track, frame.detections);
+    const matchedDetection = findMatchedDetectionForTrack(selectedInfo.track, frameDetections);
     const structuredSamples = matchedDetection
       ? ownedScanlineSamplesForDetection(frame, matchedDetection.detection_id)
       : [];
@@ -2155,6 +2209,24 @@ document.getElementById("btn-view-scanline").addEventListener("click", () => {
   showFrame();
 });
 
+document.getElementById("btn-ref-sensor").addEventListener("click", () => {
+  if (!state.bundle) return;
+  state.referenceFrame = "sensor";
+  updateReferenceFrameUI();
+  updateViewModeUI();
+  showFrame();
+});
+
+document.getElementById("btn-ref-world").addEventListener("click", () => {
+  if (!state.bundle) return;
+  const available = new Set(state.bundle.available_reference_frames || []);
+  if (!available.has("world")) return;
+  state.referenceFrame = "world";
+  updateReferenceFrameUI();
+  updateViewModeUI();
+  showFrame();
+});
+
 document.getElementById("inspect-close").addEventListener("click", hideInspectPanel);
 document.getElementById("class-controls").addEventListener("change", (e) => {
   const toggle = e.target.closest("[data-class-label]");
@@ -2183,6 +2255,9 @@ document.getElementById("object-list").addEventListener("click", (e) => {
     selectObject({ kind: "track", id: Number(rawId.replace("track-", "")) });
   }
 });
+
+updateReferenceFrameUI();
+updateViewModeUI();
 
 // Click-to-inspect on 3D boxes (distinguish click from orbit drag)
 renderer.domElement.addEventListener("mousedown", (e) => {

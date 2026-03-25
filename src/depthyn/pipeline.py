@@ -6,7 +6,15 @@ from pathlib import Path
 
 from depthyn.config import ReplayConfig
 from depthyn.detectors.factory import create_detector
-from depthyn.pose import discover_gps_csv, load_gps_pose_provider, transform_detection, transform_points
+from depthyn.models import Detection, Track
+from depthyn.pose import (
+    discover_gps_csv,
+    inverse_rotate_xy,
+    inverse_transform_points,
+    load_gps_pose_provider,
+    transform_detection,
+    transform_points,
+)
 from depthyn.perception.background import BackgroundModel
 from depthyn.rules import ZoneMonitor, load_zone_definitions
 from depthyn.scene import build_scene_state
@@ -146,6 +154,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         stage = "tracking"
         working_points = frame.points
         frame_pose = pose_provider.pose_at(frame.timestamp_ns) if pose_provider else None
+        sensor_preview_source = working_points
 
         if background_model is not None and frame_index < config.background_warmup_frames:
             background_model.observe(frame.points, timestamp_ns=frame.timestamp_ns)
@@ -154,16 +163,20 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             detector_metadata = {"mode": "background_warmup"}
             active_tracks = tracker.update([], frame.timestamp_ns)
             stage = "background_warmup"
+            sensor_detections: list[Detection] = []
+            sensor_active_tracks: list[Track] = []
         else:
             if background_model is not None:
                 working_points = background_model.filter_foreground(
                     frame.points, timestamp_ns=frame.timestamp_ns
                 )
+            sensor_preview_source = working_points if working_points else frame.points
             detector_points = (
                 working_points if detector_uses_foreground else frame.points
             )
             detector_result = detector.detect(frame, detector_points)
-            detections = detector_result.detections
+            sensor_detections = detector_result.detections
+            detections = sensor_detections
             if frame_pose is not None:
                 detections = [
                     transform_detection(detection, frame_pose)
@@ -171,6 +184,11 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 ]
             detector_metadata = detector_result.metadata
             active_tracks = tracker.update(detections, frame.timestamp_ns)
+            sensor_active_tracks = (
+                [_inverse_transform_track(track, frame_pose) for track in active_tracks]
+                if frame_pose is not None
+                else active_tracks
+            )
 
             # Continuous background observation with object-aware freezing
             if background_model is not None:
@@ -201,16 +219,23 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
 
         total_foreground_points += len(working_points)
         max_active_tracks = max(max_active_tracks, len(active_tracks))
-        preview_source = working_points if working_points else frame.points
-        if frame_pose is not None:
-            preview_source = transform_points(preview_source, frame_pose)
-        preview_points = _sample_preview_points(
-            preview_source,
+        sensor_preview_points = _sample_preview_points(
+            sensor_preview_source,
             config.preview_point_limit,
         )
-        detail_points = _sample_preview_points(
-            preview_source,
+        sensor_detail_points = _sample_preview_points(
+            sensor_preview_source,
             config.detail_point_limit,
+        )
+        preview_points = (
+            transform_points(sensor_preview_points, frame_pose)
+            if frame_pose is not None
+            else sensor_preview_points
+        )
+        detail_points = (
+            transform_points(sensor_detail_points, frame_pose)
+            if frame_pose is not None
+            else sensor_detail_points
         )
         scanline_points = _sample_scanline_points(
             frame.scanline_points or [],
@@ -258,6 +283,8 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "points_after_filtering": len(frame.points),
                 "foreground_points": len(working_points),
                 "detection_count": len(detections),
+                "sensor_preview_points": [list(point) for point in sensor_preview_points],
+                "sensor_detail_points": [list(point) for point in sensor_detail_points],
                 "preview_points": [list(point) for point in preview_points],
                 "detail_points": [list(point) for point in detail_points],
                 "scanline_shape": (
@@ -267,7 +294,13 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                     [sample[0], sample[1], sample[2], sample[3], sample[4], sample[5]]
                     for sample in scanline_points
                 ],
+                "sensor_detections": [
+                    detection.to_dict() for detection in sensor_detections
+                ],
                 "detections": [detection.to_dict() for detection in detections],
+                "sensor_active_tracks": [
+                    track.to_dict() for track in sensor_active_tracks
+                ],
                 "active_tracks": active_track_payload,
                 "scene_state": scene_state.to_dict(),
                 "detector_input_points": len(
@@ -282,6 +315,9 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         "project": "Depthyn",
         "pipeline": "scene_replay",
         "reference_frame": "world" if pose_provider is not None else "sensor",
+        "available_reference_frames": (
+            ["sensor", "world"] if pose_provider is not None else ["sensor"]
+        ),
         "world_alignment": (
             None if pose_provider is None else pose_provider.metadata()
         ),
@@ -328,6 +364,29 @@ def _load_pose_provider(config: ReplayConfig):
         return None
     gps_path = config.gps_path or discover_gps_csv(config.input_dir)
     return load_gps_pose_provider(gps_path)
+
+
+def _inverse_transform_track(track: Track, pose) -> Track:
+    centroid = inverse_transform_points([track.centroid], pose)[0]
+    velocity = inverse_rotate_xy(track.velocity, pose.heading_rad)
+    bbox_min = inverse_transform_points([track.bbox_min], pose)[0]
+    bbox_max = inverse_transform_points([track.bbox_max], pose)[0]
+    return Track(
+        track_id=track.track_id,
+        centroid=centroid,
+        velocity=velocity,
+        bbox_min=bbox_min,
+        bbox_max=bbox_max,
+        point_count=track.point_count,
+        first_seen_ns=track.first_seen_ns,
+        last_seen_ns=track.last_seen_ns,
+        label=track.label,
+        score=track.score,
+        hits=track.hits,
+        misses=track.misses,
+        age_frames=track.age_frames,
+        total_distance_m=track.total_distance_m,
+    )
 
 
 def write_summary(summary: dict[str, object], output_path: Path) -> None:

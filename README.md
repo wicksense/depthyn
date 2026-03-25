@@ -51,6 +51,7 @@ preprocessed frame
 - Write replay bundles for downstream API/UI work
 - Serve 3D and 2D browser viewers for recorded sessions
 - World-align mobile replay using GPS pose interpolation
+- Carry both sensor-frame and GPS/world-frame views in one replay bundle
 - Compare the baseline against optional ML detector backends
 
 ## Quick Start
@@ -111,8 +112,27 @@ PYTHONPATH=src python3 -m depthyn.cli serve-viewer \
 
 Notes:
 - detector inference still runs in the sensor frame
-- preview points, detections, tracks, and the ego marker are then transformed into a GPS-anchored world frame
+- the replay bundle now preserves both:
+  - `Sensor` view for LiDAR-native inspection
+  - `World` view for GPS-aligned route context
+- the viewer lets you toggle `Sensor / World` without regenerating the replay
 - world replay currently uses GPS XY position and heading; raw GPS altitude is intentionally ignored to avoid noisy vertical jitter
+- `Scanline` is an optional sensor-native inspection mode. It is most useful for debugging what the LiDAR saw in one instant, not for route playback or map context.
+
+### Sensor vs World in the viewer
+
+Depthyn supports two complementary views from the same GPS-aligned replay bundle:
+
+- `Sensor`
+  - ego marker and axes stay at the LiDAR origin
+  - best for object inspection and LiDAR-native rendering
+  - the only mode where `Scanline` is enabled
+- `World`
+  - points, detections, tracks, and ego pose are GPS-aligned
+  - best for understanding the vehicle path and spatial context
+  - `Scanline` is disabled here because it is a sensor-image view, not a world-map view
+
+If you only need the classic sensor-local replay, omit `--world-align` and the bundle will contain only the `Sensor` view.
 
 ### Replay with zone rules
 
@@ -179,10 +199,13 @@ Requirements: `numpy`, `onnxruntime-gpu` (or `onnxruntime` for CPU).
 WebGL-based 3D point cloud viewer built with Three.js:
 
 - Height-colored point cloud rendering
+- Sensor-native LiDAR ring rendering for richer sensor-frame inspection
 - Wireframe bounding boxes with per-class colors and heading rotation
 - Floating labels with class name and confidence score
 - Track trails showing movement history
 - Ego marker with forward arrow, plus moving GPS-aligned pose in world replay mode
+- `Sensor / World` toggle when the replay bundle includes GPS-aligned data
+- `Spatial / Scanline` toggle, with `Scanline` scoped to sensor view
 - Orbit/pan/zoom controls with ground grid
 - Frame playback with slider, speed control, keyboard shortcuts (Space, Arrow keys)
 - Dark theme UI

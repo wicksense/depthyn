@@ -138,12 +138,25 @@ def rotate_xy(point: Point3D, heading_rad: float) -> Point3D:
     )
 
 
+def inverse_rotate_xy(point: Point3D, heading_rad: float) -> Point3D:
+    return rotate_xy(point, -heading_rad)
+
+
 def transform_points(points: list[Point3D], pose: FramePose) -> list[Point3D]:
     tx, ty, tz = pose.position_m
     transformed: list[Point3D] = []
     for point in points:
         rx, ry, rz = rotate_xy(point, pose.heading_rad)
         transformed.append((rx + tx, ry + ty, rz + tz))
+    return transformed
+
+
+def inverse_transform_points(points: list[Point3D], pose: FramePose) -> list[Point3D]:
+    tx, ty, tz = pose.position_m
+    transformed: list[Point3D] = []
+    for point in points:
+        shifted = (point[0] - tx, point[1] - ty, point[2] - tz)
+        transformed.append(inverse_rotate_xy(shifted, pose.heading_rad))
     return transformed
 
 
@@ -155,6 +168,28 @@ def transform_detection(detection: Detection, pose: FramePose) -> Detection:
     heading = detection.heading_rad
     if heading is not None:
         heading += pose.heading_rad
+    return Detection(
+        detection_id=detection.detection_id,
+        centroid=(cx, cy, cz),
+        bbox_min=(cx - sx / 2.0, cy - sy / 2.0, cz - sz / 2.0),
+        bbox_max=(cx + sx / 2.0, cy + sy / 2.0, cz + sz / 2.0),
+        point_count=detection.point_count,
+        cell_count=detection.cell_count,
+        label=detection.label,
+        score=detection.score,
+        source=detection.source,
+        heading_rad=heading,
+    )
+
+
+def inverse_transform_detection(detection: Detection, pose: FramePose) -> Detection:
+    cx, cy, cz = inverse_transform_points([detection.centroid], pose)[0]
+    sx = detection.bbox_max[0] - detection.bbox_min[0]
+    sy = detection.bbox_max[1] - detection.bbox_min[1]
+    sz = detection.bbox_max[2] - detection.bbox_min[2]
+    heading = detection.heading_rad
+    if heading is not None:
+        heading -= pose.heading_rad
     return Detection(
         detection_id=detection.detection_id,
         centroid=(cx, cy, cz),

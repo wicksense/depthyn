@@ -245,8 +245,12 @@ class PipelineTests(unittest.TestCase):
                 )
 
             self.assertEqual(summary["reference_frame"], "world")
+            self.assertEqual(summary["available_reference_frames"], ["sensor", "world"])
             frame_summary = summary["frame_summaries"][0]
             self.assertEqual(frame_summary["frame_pose"]["position_m"], [10.0, 0.0, 0.0])
+            self.assertAlmostEqual(frame_summary["sensor_preview_points"][0][0], 1.0, places=5)
+            self.assertAlmostEqual(frame_summary["sensor_detections"][0]["centroid"][0], 2.0, places=5)
+            self.assertAlmostEqual(frame_summary["sensor_active_tracks"][0]["centroid"][0], 2.0, places=5)
             self.assertAlmostEqual(frame_summary["preview_points"][0][0], 11.0, places=5)
             self.assertAlmostEqual(frame_summary["preview_points"][0][1], 0.0, places=5)
             self.assertAlmostEqual(frame_summary["detections"][0]["centroid"][0], 12.0, places=5)
