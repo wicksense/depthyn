@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 Point3D = tuple[float, float, float]
+ScanSample = tuple[int, int, float, float, float, float]
 
 
 @dataclass(slots=True)
@@ -13,6 +14,8 @@ class Frame:
     points: list[Point3D]
     source_path: Path
     sensor_frame_id: int | None = None
+    scanline_shape: tuple[int, int] | None = None
+    scanline_points: list[ScanSample] | None = None
 
 
 @dataclass(slots=True)

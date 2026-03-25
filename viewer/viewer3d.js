@@ -206,6 +206,10 @@ function detailPointsForFrame(frame) {
   return detail.length ? detail : rawPointsForFrame(frame);
 }
 
+function scanlinePointsForFrame(frame) {
+  return frame?.scanline_points || [];
+}
+
 function buildPointCloud(displayPoints, ownershipPoints, detections = [], selectedInfo = null) {
   if (pointCloud) {
     scene.remove(pointCloud);
@@ -987,7 +991,13 @@ function showInspectPanel(det, tracks) {
   ).join("");
 
   panel.style.display = "block";
-  renderInspectScanline(ownedPointsForDetection(det.detection_id), det.label);
+  const currentFrame = state.bundle?.frame_summaries?.[state.frameIndex];
+  const structuredSamples = currentFrame ? ownedScanlineSamplesForDetection(currentFrame, det.detection_id) : [];
+  if (structuredSamples.length && currentFrame?.scanline_shape) {
+    renderInspectStructuredScanline(structuredSamples, currentFrame.scanline_shape, det.label);
+  } else {
+    renderInspectScanline(ownedPointsForDetection(det.detection_id), det.label);
+  }
 }
 
 function hideInspectPanel() {
@@ -1043,6 +1053,37 @@ function ownedPointsForDetection(detectionId) {
   return state.pointOwnership.byDetectionId.get(detectionId) || [];
 }
 
+function assignScanlineOwner(sample, detections) {
+  if (!detections?.length) return null;
+  const point = [sample[2], sample[3], sample[4]];
+  let best = null;
+  let bestDist = Infinity;
+  for (const detection of detections) {
+    if (!pointInDetectionVolume(point, detection)) continue;
+    const dx = point[0] - detection.centroid[0];
+    const dy = point[1] - detection.centroid[1];
+    const dz = point[2] - detection.centroid[2];
+    const dist = dx * dx + dy * dy + dz * dz;
+    if (dist < bestDist) {
+      best = detection;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function ownedScanlineSamplesForDetection(frame, detectionId) {
+  const samples = scanlinePointsForFrame(frame);
+  if (!samples.length) return [];
+  const detection = frame.detections.find((item) => item.detection_id === detectionId);
+  if (!detection) return [];
+  const visibleDetections = frame.detections.filter((item) => isLabelVisible(item.label));
+  return samples.filter((sample) => {
+    const owner = assignScanlineOwner(sample, visibleDetections);
+    return owner?.detection_id === detectionId;
+  });
+}
+
 function renderInspectScanline(points, label) {
   const canvas = document.getElementById("inspect-scanline");
   if (!canvas) return;
@@ -1096,6 +1137,41 @@ function renderInspectScanline(points, label) {
   ctx.font = "11px Inter, sans-serif";
   ctx.fillText("Scanline view", 12, 18);
   ctx.fillText(`${points.length} pts`, width - 58, 18);
+}
+
+function renderInspectStructuredScanline(samples, shape, label) {
+  const canvas = document.getElementById("inspect-scanline");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(8, 10, 14, 0.96)";
+  ctx.fillRect(0, 0, width, height);
+
+  if (!samples.length || !shape) {
+    renderInspectScanline([], label);
+    return;
+  }
+
+  const rows = shape[0] || 1;
+  const cols = shape[1] || 1;
+  const color = labelColor(label).hex;
+  ctx.fillStyle = color;
+  for (const sample of samples) {
+    const x = (sample[1] / Math.max(1, cols - 1)) * (width - 18) + 9;
+    const y = (sample[0] / Math.max(1, rows - 1)) * (height - 18) + 9;
+    ctx.globalAlpha = 0.82;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "rgba(212, 216, 228, 0.72)";
+  ctx.font = "11px Inter, sans-serif";
+  ctx.fillText("Sensor scanline", 12, 18);
+  ctx.fillText(`${samples.length} pts`, width - 58, 18);
 }
 
 function pointToAngles(point) {
@@ -1161,12 +1237,18 @@ function drawRangePointSet(points, color, radius, alpha, width, height, extents)
 
 function drawRangeDetections(frame, width, height, extents, selectedInfo) {
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
+  const scanlineSamples = scanlinePointsForFrame(frame);
+  const scanShape = frame.scanline_shape || null;
   for (const detection of frame.detections) {
     if (!isLabelVisible(detection.label)) continue;
-    const ownedPoints = ownedPointsForDetection(detection.detection_id).map((point) => point.sourcePosition);
-    if (!ownedPoints.length) continue;
+    const canvasPoints = scanlineSamples.length && scanShape
+      ? ownedScanlineSamplesForDetection(frame, detection.detection_id).map((sample) => ({
+          x: (sample[1] / Math.max(1, scanShape[1] - 1)) * width,
+          y: (sample[0] / Math.max(1, scanShape[0] - 1)) * height,
+        }))
+      : ownedPointsForDetection(detection.detection_id).map((point) => rangePointToCanvas(point.sourcePosition, width, height, extents));
+    if (!canvasPoints.length) continue;
 
-    const canvasPoints = ownedPoints.map((point) => rangePointToCanvas(point, width, height, extents));
     const xs = canvasPoints.map((point) => point.x);
     const ys = canvasPoints.map((point) => point.y);
     const minX = Math.max(8, Math.min(...xs) - 8);
@@ -1207,34 +1289,79 @@ function renderRangeView(frame, selectedInfo) {
   drawRangeGrid(width, height);
 
   const points = detailPointsForFrame(frame);
+  const scanlineSamples = scanlinePointsForFrame(frame);
+  const scanShape = frame.scanline_shape || null;
   const extents = rangeFrameExtents(points);
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
   const visibleDetections = frame.detections.filter((detection) => isLabelVisible(detection.label));
 
   if (state.overlays.rawPoints) {
-    drawRangePointSet(points, "rgba(139,111,191,1)", 1.1, 0.38, width, height, extents);
+    if (scanlineSamples.length && scanShape) {
+      rangeCtx.fillStyle = "rgba(139,111,191,1)";
+      rangeCtx.globalAlpha = 0.38;
+      for (const sample of scanlineSamples) {
+        const x = (sample[1] / Math.max(1, scanShape[1] - 1)) * width;
+        const y = (sample[0] / Math.max(1, scanShape[0] - 1)) * height;
+        rangeCtx.beginPath();
+        rangeCtx.arc(x, y, 1.1, 0, Math.PI * 2);
+        rangeCtx.fill();
+      }
+      rangeCtx.globalAlpha = 1;
+    } else {
+      drawRangePointSet(points, "rgba(139,111,191,1)", 1.1, 0.38, width, height, extents);
+    }
   }
 
   if (state.overlays.objectPoints) {
     for (const detection of visibleDetections) {
-      const ownedPoints = ownedPointsForDetection(detection.detection_id).map((point) => point.sourcePosition);
-      if (!ownedPoints.length) continue;
       const isSelected = detection.detection_id === selectedDetId;
-      drawRangePointSet(
-        ownedPoints,
-        labelColor(detection.label).hex,
-        isSelected ? 2.0 : 1.6,
-        isSelected ? 0.95 : (selectedInfo ? 0.32 : 0.78),
-        width,
-        height,
-        extents,
-      );
+      if (scanlineSamples.length && scanShape) {
+        const ownedSamples = ownedScanlineSamplesForDetection(frame, detection.detection_id);
+        if (!ownedSamples.length) continue;
+        rangeCtx.fillStyle = labelColor(detection.label).hex;
+        rangeCtx.globalAlpha = isSelected ? 0.95 : (selectedInfo ? 0.32 : 0.78);
+        const radius = isSelected ? 2.0 : 1.6;
+        for (const sample of ownedSamples) {
+          const x = (sample[1] / Math.max(1, scanShape[1] - 1)) * width;
+          const y = (sample[0] / Math.max(1, scanShape[0] - 1)) * height;
+          rangeCtx.beginPath();
+          rangeCtx.arc(x, y, radius, 0, Math.PI * 2);
+          rangeCtx.fill();
+        }
+        rangeCtx.globalAlpha = 1;
+      } else {
+        const ownedPoints = ownedPointsForDetection(detection.detection_id).map((point) => point.sourcePosition);
+        if (!ownedPoints.length) continue;
+        drawRangePointSet(
+          ownedPoints,
+          labelColor(detection.label).hex,
+          isSelected ? 2.0 : 1.6,
+          isSelected ? 0.95 : (selectedInfo ? 0.32 : 0.78),
+          width,
+          height,
+          extents,
+        );
+      }
     }
   }
 
   if (state.overlays.selectedPoints && selectedInfo?.detection) {
-    const ownedPoints = ownedPointsForDetection(selectedInfo.detection.detection_id).map((point) => point.sourcePosition);
-    drawRangePointSet(ownedPoints, "#fff5b8", 2.4, 0.95, width, height, extents);
+    if (scanlineSamples.length && scanShape) {
+      const ownedSamples = ownedScanlineSamplesForDetection(frame, selectedInfo.detection.detection_id);
+      rangeCtx.fillStyle = "#fff5b8";
+      rangeCtx.globalAlpha = 0.95;
+      for (const sample of ownedSamples) {
+        const x = (sample[1] / Math.max(1, scanShape[1] - 1)) * width;
+        const y = (sample[0] / Math.max(1, scanShape[0] - 1)) * height;
+        rangeCtx.beginPath();
+        rangeCtx.arc(x, y, 2.4, 0, Math.PI * 2);
+        rangeCtx.fill();
+      }
+      rangeCtx.globalAlpha = 1;
+    } else {
+      const ownedPoints = ownedPointsForDetection(selectedInfo.detection.detection_id).map((point) => point.sourcePosition);
+      drawRangePointSet(ownedPoints, "#fff5b8", 2.4, 0.95, width, height, extents);
+    }
   }
 
   if (state.overlays.boxes) {
@@ -1358,11 +1485,19 @@ function showTrackPanel(track) {
   ).join("");
   panel.style.display = "block";
 
-  const matchedDetection = findMatchedDetectionForTrack(track, state.bundle?.frame_summaries?.[state.frameIndex]?.detections || []);
-  renderInspectScanline(
-    matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
-    matchedDetection?.label || track.label,
-  );
+  const currentFrame = state.bundle?.frame_summaries?.[state.frameIndex];
+  const matchedDetection = findMatchedDetectionForTrack(track, currentFrame?.detections || []);
+  const structuredSamples = matchedDetection && currentFrame
+    ? ownedScanlineSamplesForDetection(currentFrame, matchedDetection.detection_id)
+    : [];
+  if (structuredSamples.length && currentFrame?.scanline_shape) {
+    renderInspectStructuredScanline(structuredSamples, currentFrame.scanline_shape, matchedDetection?.label || track.label);
+  } else {
+    renderInspectScanline(
+      matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
+      matchedDetection?.label || track.label,
+    );
+  }
 }
 
 function selectObject(selection) {
@@ -1619,13 +1754,25 @@ function showFrame() {
   updateSidebar();
   renderRangeView(frame, selectedInfo);
   if (selectedInfo?.detection) {
-    renderInspectScanline(ownedPointsForDetection(selectedInfo.detection.detection_id), selectedInfo.detection.label);
+    const structuredSamples = ownedScanlineSamplesForDetection(frame, selectedInfo.detection.detection_id);
+    if (structuredSamples.length && frame.scanline_shape) {
+      renderInspectStructuredScanline(structuredSamples, frame.scanline_shape, selectedInfo.detection.label);
+    } else {
+      renderInspectScanline(ownedPointsForDetection(selectedInfo.detection.detection_id), selectedInfo.detection.label);
+    }
   } else if (selectedInfo?.track) {
     const matchedDetection = findMatchedDetectionForTrack(selectedInfo.track, frame.detections);
-    renderInspectScanline(
-      matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
-      matchedDetection?.label || selectedInfo.track.label,
-    );
+    const structuredSamples = matchedDetection
+      ? ownedScanlineSamplesForDetection(frame, matchedDetection.detection_id)
+      : [];
+    if (structuredSamples.length && frame.scanline_shape) {
+      renderInspectStructuredScanline(structuredSamples, frame.scanline_shape, matchedDetection?.label || selectedInfo.track.label);
+    } else {
+      renderInspectScanline(
+        matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
+        matchedDetection?.label || selectedInfo.track.label,
+      );
+    }
   }
 
   document.getElementById("frame-counter").textContent =

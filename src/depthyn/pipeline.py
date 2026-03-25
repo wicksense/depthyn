@@ -211,6 +211,10 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             preview_source,
             config.detail_point_limit,
         )
+        scanline_points = _sample_scanline_points(
+            frame.scanline_points or [],
+            config.detail_point_limit,
+        )
         active_track_payload = [track.to_dict() for track in active_tracks]
         scene_state = build_scene_state(
             frame_index=frame_index,
@@ -250,6 +254,13 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
                 "detection_count": len(detections),
                 "preview_points": [list(point) for point in preview_points],
                 "detail_points": [list(point) for point in detail_points],
+                "scanline_shape": (
+                    None if frame.scanline_shape is None else list(frame.scanline_shape)
+                ),
+                "scanline_points": [
+                    [sample[0], sample[1], sample[2], sample[3], sample[4], sample[5]]
+                    for sample in scanline_points
+                ],
                 "detections": [detection.to_dict() for detection in detections],
                 "active_tracks": active_track_payload,
                 "scene_state": scene_state.to_dict(),
@@ -327,6 +338,16 @@ def _safe_average(total: int, count: int) -> float:
 def _sample_preview_points(
     points: list[tuple[float, float, float]], limit: int
 ) -> list[tuple[float, float, float]]:
+    if limit <= 0 or len(points) <= limit:
+        return points
+    step = max(1, len(points) // limit)
+    sampled = points[::step]
+    return sampled[:limit]
+
+
+def _sample_scanline_points(
+    points: list[tuple[int, int, float, float, float, float]], limit: int
+) -> list[tuple[int, int, float, float, float, float]]:
     if limit <= 0 or len(points) <= limit:
         return points
     step = max(1, len(points) // limit)

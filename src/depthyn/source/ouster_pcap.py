@@ -125,13 +125,19 @@ def iter_ouster_pcap_frames(
 
                 xyz = xyz_lut(scan)  # (H, W, 3)
                 rng = scan.field("RANGE")  # (H, W) uint32
+                height, width = xyz.shape[:2]
 
                 # Flatten
                 xyz_flat = xyz.reshape(-1, 3)
                 rng_flat = rng.ravel()
+                row_idx = np.repeat(np.arange(height, dtype=np.int32), width)
+                col_idx = np.tile(np.arange(width, dtype=np.int32), height)
                 valid_mask = rng_flat > 0
 
                 xyz_valid = xyz_flat[valid_mask]
+                rng_valid = rng_flat[valid_mask]
+                rows_valid = row_idx[valid_mask]
+                cols_valid = col_idx[valid_mask]
                 if len(xyz_valid) == 0:
                     continue
 
@@ -148,6 +154,9 @@ def iter_ouster_pcap_frames(
                     & (z <= z_max_m)
                 )
                 filtered = xyz_valid[keep]
+                scanline_rows = rows_valid[keep]
+                scanline_cols = cols_valid[keep]
+                scanline_ranges = rng_valid[keep]
 
                 if len(filtered) == 0:
                     continue
@@ -164,6 +173,17 @@ def iter_ouster_pcap_frames(
                 points: list[Point3D] = [
                     (float(row[0]), float(row[1]), float(row[2]))
                     for row in filtered
+                ]
+                scanline_points = [
+                    (
+                        int(scanline_rows[index]),
+                        int(scanline_cols[index]),
+                        float(filtered[index][0]),
+                        float(filtered[index][1]),
+                        float(filtered[index][2]),
+                        float(scanline_ranges[index]) / 1000.0,
+                    )
+                    for index in range(len(filtered))
                 ]
 
                 # Timestamp: median of per-column timestamps
@@ -183,6 +203,8 @@ def iter_ouster_pcap_frames(
                     points=points,
                     source_path=pcap_path,
                     sensor_frame_id=sensor_fid,
+                    scanline_shape=(height, width),
+                    scanline_points=scanline_points,
                 )
                 frame_count += 1
 
