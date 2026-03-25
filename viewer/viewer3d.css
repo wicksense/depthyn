@@ -330,6 +330,27 @@ canvas { display: block; }
   color: var(--text);
 }
 
+.rule-file-btn {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.rule-file-btn:hover {
+  background: rgba(89, 184, 255, 0.12);
+  color: var(--text);
+}
+
+.rule-file-btn input {
+  display: none;
+}
+
 #rule-draw-status {
   font-size: 11px;
   color: var(--text-muted);
@@ -340,6 +361,32 @@ canvas { display: block; }
   flex-direction: column;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+#event-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.event-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.event-chip strong {
+  color: var(--text);
+  font-size: 11px;
 }
 
 .filter-row {
@@ -543,6 +590,17 @@ canvas { display: block; }
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+.rule-card.is-selected {
+  border-color: rgba(89, 184, 255, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(89, 184, 255, 0.15);
+}
+
+.rule-card-header-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .event-card {

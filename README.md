@@ -150,6 +150,8 @@ When a replay contains zone-driven scene events, the 3D viewer now shows:
 - an `Events` panel with jump-to-frame actions
 - event markers on the playback scrubber
 - track-focused review when you jump from an event
+- event summary chips by type
+- more natural event wording like `Car crossed West Gate westbound`
 
 ### Replay with tripwires and exportable events
 
@@ -189,8 +191,12 @@ The 3D viewer now includes a `Rules` panel for replay-first authoring:
   - click two ground-plane corners in `Spatial`
 - `Add Tripwire`
   - click a start point and an end point in `Spatial`
+- `Import Rules`
+  - load a JSON rules file into the active `Sensor` or `World` rule set
 - edit rule fields in the sidebar
+- drag zone corners and tripwire endpoints directly in the scene
 - export the current reference frame's rules as JSON
+- save/load rules through the local viewer service
 - `Apply Rules`
   - re-evaluates the current replay in-memory using the authored rules
 - `Reset Preview`
@@ -205,6 +211,14 @@ Important behavior:
 - replay preview is also reference-frame aware
   - applying rules in `World` re-evaluates world-frame tracks
   - switching to `Sensor` can apply that frame's authored rules instead
+
+The local viewer service now exposes a small session API while `serve-viewer` is running:
+- `GET /api/session`
+- `GET /api/rules?frame=sensor|world`
+- `PUT /api/rules?frame=sensor|world`
+
+That service powers the in-viewer `Save Rules` / `Load Saved` workflow for a local app session.
+It is still a local app architecture, not a cloud dependency.
 
 ### Evaluate against Gemini/Ouster logs
 
