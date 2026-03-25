@@ -129,6 +129,7 @@ createGroundGrid();
 
 let pointCloud = null;
 let objectPointCloud = null;
+let objectSilhouetteCloud = null;
 let highlightPointCloud = null;
 let boxGroup = new THREE.Group();
 let trailGroup = new THREE.Group();
@@ -197,6 +198,12 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
     objectPointCloud.geometry.dispose();
     objectPointCloud.material.dispose();
     objectPointCloud = null;
+  }
+  if (objectSilhouetteCloud) {
+    scene.remove(objectSilhouetteCloud);
+    objectSilhouetteCloud.geometry.dispose();
+    objectSilhouetteCloud.material.dispose();
+    objectSilhouetteCloud = null;
   }
   if (highlightPointCloud) {
     scene.remove(highlightPointCloud);
@@ -276,6 +283,7 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
   if (objectPoints.length) {
     const ownedPositions = new Float32Array(objectPoints.length * 3);
     const ownedColors = new Float32Array(objectPoints.length * 3);
+    const silhouetteColors = new Float32Array(objectPoints.length * 3);
     for (let i = 0; i < objectPoints.length; i++) {
       const owned = objectPoints[i];
       ownedPositions[i * 3] = owned.position[0];
@@ -286,17 +294,39 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
       ownedColors[i * 3] = owned.color.r * intensity;
       ownedColors[i * 3 + 1] = owned.color.g * intensity;
       ownedColors[i * 3 + 2] = owned.color.b * intensity;
+
+      const silhouetteIntensity = owned.isSelected ? 0.92 : 0.68;
+      silhouetteColors[i * 3] = Math.min(1, owned.color.r * silhouetteIntensity + 0.08);
+      silhouetteColors[i * 3 + 1] = Math.min(1, owned.color.g * silhouetteIntensity + 0.06);
+      silhouetteColors[i * 3 + 2] = Math.min(1, owned.color.b * silhouetteIntensity + 0.10);
     }
+
+    const silhouetteGeometry = new THREE.BufferGeometry();
+    silhouetteGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ownedPositions.slice(), 3));
+    silhouetteGeometry.setAttribute("color", new THREE.Float32BufferAttribute(silhouetteColors, 3));
+    const silhouetteMaterial = new THREE.PointsMaterial({
+      size: selectedVolume ? 0.92 : 0.78,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: selectedVolume ? 0.34 : 0.18,
+      depthWrite: false,
+      map: circleTexture,
+      alphaMap: circleTexture,
+      alphaTest: 0.05,
+    });
+    objectSilhouetteCloud = new THREE.Points(silhouetteGeometry, silhouetteMaterial);
+    scene.add(objectSilhouetteCloud);
 
     const ownedGeometry = new THREE.BufferGeometry();
     ownedGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ownedPositions, 3));
     ownedGeometry.setAttribute("color", new THREE.Float32BufferAttribute(ownedColors, 3));
     const ownedMaterial = new THREE.PointsMaterial({
-      size: selectedVolume ? 0.34 : 0.38,
+      size: selectedVolume ? 0.44 : 0.4,
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
-      opacity: selectedVolume ? 0.35 : 0.92,
+      opacity: selectedVolume ? 0.48 : 0.9,
       depthWrite: false,
       map: circleTexture,
       alphaMap: circleTexture,
@@ -429,6 +459,9 @@ function applyOverlayVisibility() {
   if (pointCloud) {
     pointCloud.visible = state.overlays.rawPoints;
   }
+  if (objectSilhouetteCloud) {
+    objectSilhouetteCloud.visible = state.overlays.objectPoints;
+  }
   if (objectPointCloud) {
     objectPointCloud.visible = state.overlays.objectPoints;
   }
@@ -494,10 +527,10 @@ function buildBoxes(detections, activeTracks) {
     const boxGeo = new THREE.BoxGeometry(sx, sy, sz);
     const edges = new THREE.EdgesGeometry(boxGeo);
     const lineMat = new THREE.LineBasicMaterial({
-      color: isSelected ? 0xfff1b3 : threeColor,
+      color: isSelected ? 0xffefbf : threeColor,
       linewidth: isSelected ? 3 : 2,
       transparent: true,
-      opacity: isSelected ? 1.0 : (isDimmed ? 0.2 : 0.9),
+      opacity: isSelected ? 0.9 : (isDimmed ? 0.08 : 0.36),
     });
     const wireframe = new THREE.LineSegments(edges, lineMat);
     wireframe.position.set(cx, cy, cz);
@@ -510,7 +543,7 @@ function buildBoxes(detections, activeTracks) {
       const glowMat = new THREE.LineBasicMaterial({
         color: 0xffc95a,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.3,
       });
       const glow = new THREE.LineSegments(edges, glowMat);
       glow.position.set(cx, cy, cz);
@@ -543,7 +576,7 @@ function buildBoxes(detections, activeTracks) {
     const fillMat = new THREE.MeshBasicMaterial({
       color: isSelected ? 0xffc95a : threeColor,
       transparent: true,
-      opacity: isSelected ? 0.18 : (isDimmed ? 0.02 : 0.08),
+      opacity: isSelected ? 0.1 : (isDimmed ? 0.0 : 0.035),
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -562,9 +595,11 @@ function buildBoxes(detections, activeTracks) {
     const poleMat = new THREE.LineBasicMaterial({
       color: isSelected ? 0xffc95a : threeColor,
       transparent: true,
-      opacity: isSelected ? 0.45 : (isDimmed ? 0.06 : 0.2),
+      opacity: isSelected ? 0.22 : (isDimmed ? 0.0 : 0.08),
     });
-    boxGroup.add(new THREE.Line(poleGeo, poleMat));
+    if (isSelected || !selectedInfo) {
+      boxGroup.add(new THREE.Line(poleGeo, poleMat));
+    }
 
     // Store data for 3D label projection
     wireframe.userData = {
