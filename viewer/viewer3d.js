@@ -200,11 +200,17 @@ function commitRulePoint(point) {
   state.authoring.points.push(point);
   if (state.authoring.mode === "zone" && state.authoring.points.length >= 2) {
     addAuthoredZone(state.authoring.points[0], state.authoring.points[1]);
+    if (state.rulePreviewApplied) {
+      applyRulesToReplay();
+    }
     cancelRuleDrawing();
     return;
   }
   if (state.authoring.mode === "tripwire" && state.authoring.points.length >= 2) {
     addAuthoredTripwire(state.authoring.points[0], state.authoring.points[1]);
+    if (state.rulePreviewApplied) {
+      applyRulesToReplay();
+    }
     cancelRuleDrawing();
     return;
   }
@@ -226,9 +232,217 @@ function exportRulesJson() {
   );
 }
 
+function cloneBundle(bundle) {
+  return JSON.parse(JSON.stringify(bundle));
+}
+
+function trackListForReference(frame, referenceFrame) {
+  if (referenceFrame === "sensor") {
+    return frame.sensor_active_tracks || frame.active_tracks || [];
+  }
+  return frame.active_tracks || frame.sensor_active_tracks || [];
+}
+
+function pointInsideZone(point, zone) {
+  return (
+    point[0] >= zone.min_xy[0]
+    && point[0] <= zone.max_xy[0]
+    && point[1] >= zone.min_xy[1]
+    && point[1] <= zone.max_xy[1]
+  );
+}
+
+function orientation2D(a, b, c) {
+  return ((b[0] - a[0]) * (c[1] - a[1])) - ((b[1] - a[1]) * (c[0] - a[0]));
+}
+
+function pointOnSegment(a, b, c, epsilon = 1e-6) {
+  if (Math.abs(orientation2D(a, b, c)) > epsilon) return false;
+  return (
+    c[0] >= Math.min(a[0], b[0]) - epsilon
+    && c[0] <= Math.max(a[0], b[0]) + epsilon
+    && c[1] >= Math.min(a[1], b[1]) - epsilon
+    && c[1] <= Math.max(a[1], b[1]) + epsilon
+  );
+}
+
+function segmentsIntersect2D(a, b, c, d, epsilon = 1e-6) {
+  const abc = orientation2D(a, b, c);
+  const abd = orientation2D(a, b, d);
+  const cda = orientation2D(c, d, a);
+  const cdb = orientation2D(c, d, b);
+  if ((abc * abd) < -epsilon && (cda * cdb) < -epsilon) {
+    return true;
+  }
+  return (
+    pointOnSegment(a, b, c, epsilon)
+    || pointOnSegment(a, b, d, epsilon)
+    || pointOnSegment(c, d, a, epsilon)
+    || pointOnSegment(c, d, b, epsilon)
+  );
+}
+
+function crossingDirection(previousPoint, currentPoint, tripwire, epsilon = 1e-6) {
+  if (!segmentsIntersect2D(previousPoint, currentPoint, tripwire.start_xy, tripwire.end_xy, epsilon)) {
+    return null;
+  }
+  const edgeX = tripwire.end_xy[0] - tripwire.start_xy[0];
+  const edgeY = tripwire.end_xy[1] - tripwire.start_xy[1];
+  const motionX = currentPoint[0] - previousPoint[0];
+  const motionY = currentPoint[1] - previousPoint[1];
+  const positiveNormalX = edgeY;
+  const positiveNormalY = -edgeX;
+  const projection = (motionX * positiveNormalX) + (motionY * positiveNormalY);
+  if (projection > epsilon) return tripwire.positive_direction_label;
+  if (projection < -epsilon) return tripwire.negative_direction_label;
+  return null;
+}
+
+function evaluateRulesForBundle(bundle, referenceFrame, rules) {
+  const derived = cloneBundle(bundle);
+  const activeMemberships = new Map();
+  const dwellEmitted = new Set();
+  const lastPositions = new Map();
+  const allEvents = [];
+
+  for (const frame of derived.frame_summaries) {
+    const tracks = [...trackListForReference(frame, referenceFrame)].sort((a, b) => a.track_id - b.track_id);
+    const frameEvents = [];
+    const zoneOccupancy = [];
+    const currentMemberships = new Set();
+
+    for (const zone of rules.zones) {
+      const insideTrackIds = [];
+      for (const track of tracks) {
+        if (!pointInsideZone(track.centroid, zone)) continue;
+        insideTrackIds.push(track.track_id);
+        const membershipKey = `${track.track_id}::${zone.zone_id}`;
+        currentMemberships.add(membershipKey);
+        if (!activeMemberships.has(membershipKey)) {
+          activeMemberships.set(membershipKey, frame.timestamp_ns);
+          frameEvents.push({
+            event_type: "entered",
+            zone_id: zone.zone_id,
+            zone_name: zone.name,
+            track_id: track.track_id,
+            timestamp_ns: frame.timestamp_ns,
+            rule_kind: "zone",
+          });
+          continue;
+        }
+
+        const dwellSeconds = (frame.timestamp_ns - activeMemberships.get(membershipKey)) / 1_000_000_000;
+        if (
+          Number(zone.dwell_alert_seconds || 0) > 0
+          && dwellSeconds >= Number(zone.dwell_alert_seconds || 0)
+          && !dwellEmitted.has(membershipKey)
+        ) {
+          dwellEmitted.add(membershipKey);
+          frameEvents.push({
+            event_type: "dwell",
+            zone_id: zone.zone_id,
+            zone_name: zone.name,
+            track_id: track.track_id,
+            timestamp_ns: frame.timestamp_ns,
+            rule_kind: "zone",
+            dwell_seconds: Math.round(dwellSeconds * 1000) / 1000,
+          });
+        }
+      }
+      zoneOccupancy.push({
+        zone_id: zone.zone_id,
+        zone_name: zone.name,
+        kind: zone.kind || "inclusion",
+        color: zone.color || "#6f8f77",
+        track_ids: insideTrackIds,
+        object_count: insideTrackIds.length,
+        dwell_alert_seconds: Number(zone.dwell_alert_seconds || 0),
+      });
+    }
+
+    for (const membershipKey of [...activeMemberships.keys()].sort()) {
+      if (currentMemberships.has(membershipKey)) continue;
+      const [trackIdText, zoneId] = membershipKey.split("::");
+      const zone = rules.zones.find((item) => item.zone_id === zoneId);
+      if (!zone) continue;
+      const dwellSeconds = (frame.timestamp_ns - activeMemberships.get(membershipKey)) / 1_000_000_000;
+      activeMemberships.delete(membershipKey);
+      dwellEmitted.delete(membershipKey);
+      frameEvents.push({
+        event_type: "exited",
+        zone_id: zone.zone_id,
+        zone_name: zone.name,
+        track_id: Number(trackIdText),
+        timestamp_ns: frame.timestamp_ns,
+        rule_kind: "zone",
+        dwell_seconds: Math.round(dwellSeconds * 1000) / 1000,
+      });
+    }
+
+    for (const track of tracks) {
+      const previousPoint = lastPositions.get(track.track_id);
+      if (!previousPoint) continue;
+      const prev2D = [previousPoint[0], previousPoint[1]];
+      const current2D = [track.centroid[0], track.centroid[1]];
+      for (const tripwire of rules.tripwires) {
+        const direction = crossingDirection(prev2D, current2D, tripwire);
+        if (!direction) continue;
+        frameEvents.push({
+          event_type: "crossed",
+          zone_id: tripwire.tripwire_id,
+          zone_name: tripwire.name,
+          track_id: track.track_id,
+          timestamp_ns: frame.timestamp_ns,
+          rule_kind: "tripwire",
+          direction,
+        });
+      }
+    }
+
+    lastPositions.clear();
+    for (const track of tracks) {
+      lastPositions.set(track.track_id, [...track.centroid]);
+    }
+
+    allEvents.push(...frameEvents);
+    frame.scene_state.zones = zoneOccupancy;
+    frame.scene_state.events = frameEvents;
+    frame.scene_state.zone_count = zoneOccupancy.length;
+    frame.scene_state.event_count = frameEvents.length;
+  }
+
+  derived.zone_definitions = rules.zones.map(cloneZoneDefinition);
+  derived.tripwire_definitions = rules.tripwires.map(cloneTripwireDefinition);
+  derived.event_summaries = allEvents;
+  derived.metrics = {
+    ...(derived.metrics || {}),
+    total_zone_events: allEvents.length,
+  };
+  derived.rule_preview = {
+    applied: true,
+    reference_frame: referenceFrame,
+  };
+  return derived;
+}
+
+function applyRulesToReplay() {
+  if (!state.sourceBundle) return;
+  state.bundle = evaluateRulesForBundle(state.sourceBundle, currentReferenceFrame(), currentRuleState());
+  state.rulePreviewApplied = true;
+  state.eventTimeline = buildEventTimeline(state.bundle);
+}
+
+function resetRulePreview() {
+  if (!state.sourceBundle) return;
+  state.bundle = cloneBundle(state.sourceBundle);
+  state.rulePreviewApplied = false;
+  state.eventTimeline = buildEventTimeline(state.bundle);
+}
+
 // ─── State ───────────────────────────────────────────────────────
 
 const state = {
+  sourceBundle: null,
   bundle: null,
   frameIndex: 0,
   playing: false,
@@ -249,6 +463,7 @@ const state = {
     points: [],
     hoverPoint: null,
   },
+  rulePreviewApplied: false,
   pointOwnership: {
     byDetectionId: new Map(),
   },
@@ -2397,7 +2612,7 @@ function renderRulePanel(bundle) {
       ? `Tripwire draw active in ${reference}. Click the start point.`
       : `Tripwire draw active in ${reference}. Click the end point.`;
   } else {
-    statusEl.textContent = `${reference.charAt(0).toUpperCase() + reference.slice(1)} rules: ${rules.zones.length} zones, ${rules.tripwires.length} tripwires.`;
+    statusEl.textContent = `${reference.charAt(0).toUpperCase() + reference.slice(1)} rules: ${rules.zones.length} zones, ${rules.tripwires.length} tripwires.${state.rulePreviewApplied ? " Replay preview is active." : ""}`;
   }
 
   const cards = [];
@@ -2486,6 +2701,9 @@ function updateSidebar() {
     ["Reference", referenceFrame],
     ["Frame axes", frameAxes],
   ];
+  if (bundle.rule_preview?.applied) {
+    rows.push(["Rule preview", `applied in ${bundle.rule_preview.reference_frame}`]);
+  }
   if (!scanlineModeSupported()) {
     rows.push(["Scanline", "disabled in world mode"]);
   }
@@ -2651,26 +2869,28 @@ function initializeClassVisibility(bundle) {
 // ─── Frame management ───────────────────────────────────────────
 
 function setBundle(bundle) {
-  state.bundle = bundle;
+  state.sourceBundle = cloneBundle(bundle);
+  state.bundle = cloneBundle(bundle);
   state.frameIndex = 0;
   stopPlayback();
   state.selected = null;
-  state.referenceFrame = bundle.reference_frame || "sensor";
+  state.referenceFrame = state.bundle.reference_frame || "sensor";
   state.classVisibility = {};
-  state.eventTimeline = buildEventTimeline(bundle);
+  state.eventTimeline = buildEventTimeline(state.bundle);
   state.eventFilters = { type: "all", label: "all", rule: "all" };
-  initializeRuleSets(bundle);
+  state.rulePreviewApplied = false;
+  initializeRuleSets(state.bundle);
   cancelRuleDrawing();
   document.getElementById("inspect-panel").style.display = "none";
-  initializeClassVisibility(bundle);
+  initializeClassVisibility(state.bundle);
 
   const slider = document.getElementById("frame-slider");
   slider.min = 0;
-  slider.max = Math.max(0, bundle.frame_summaries.length - 1);
+  slider.max = Math.max(0, state.bundle.frame_summaries.length - 1);
   slider.value = 0;
 
   // Center camera on scene
-  const b = bundle.scene_bounds;
+  const b = state.bundle.scene_bounds;
   const cx = (b.min[0] + b.max[0]) / 2;
   const cy = (b.min[1] + b.max[1]) / 2;
   controls.target.set(cx, cy, 0);
@@ -2804,6 +3024,9 @@ document.getElementById("btn-ref-sensor").addEventListener("click", () => {
   if (!state.bundle) return;
   cancelRuleDrawing();
   state.referenceFrame = "sensor";
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
   updateReferenceFrameUI();
   updateViewModeUI();
   showFrame();
@@ -2815,6 +3038,9 @@ document.getElementById("btn-ref-world").addEventListener("click", () => {
   if (!available.has("world")) return;
   cancelRuleDrawing();
   state.referenceFrame = "world";
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
   updateReferenceFrameUI();
   updateViewModeUI();
   showFrame();
@@ -2906,6 +3132,20 @@ document.getElementById("btn-export-rules-json").addEventListener("click", () =>
   exportRulesJson();
 });
 
+document.getElementById("btn-apply-rules").addEventListener("click", () => {
+  if (!state.bundle) return;
+  cancelRuleDrawing();
+  applyRulesToReplay();
+  showFrame();
+});
+
+document.getElementById("btn-reset-rule-preview").addEventListener("click", () => {
+  if (!state.bundle) return;
+  cancelRuleDrawing();
+  resetRulePreview();
+  showFrame();
+});
+
 document.getElementById("rule-list").addEventListener("input", (e) => {
   const card = e.target.closest(".rule-card");
   const input = e.target.closest("input[data-field]");
@@ -2916,6 +3156,9 @@ document.getElementById("rule-list").addEventListener("input", (e) => {
   const item = collection.find((entry) => String(entry[idField]) === card.dataset.ruleId);
   if (!item) return;
   item[input.dataset.field] = input.type === "number" ? Number(input.value || 0) : input.value;
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
   buildRuleOverlays();
   updateSidebar();
 });
@@ -2928,6 +3171,9 @@ document.getElementById("rule-list").addEventListener("click", (e) => {
     rules.zones = rules.zones.filter((zone) => zone.zone_id !== button.dataset.ruleId);
   } else {
     rules.tripwires = rules.tripwires.filter((tripwire) => tripwire.tripwire_id !== button.dataset.ruleId);
+  }
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
   }
   buildRuleOverlays();
   updateSidebar();
