@@ -53,6 +53,7 @@ preprocessed frame
 - World-align mobile replay using GPS pose interpolation
 - Carry both sensor-frame and GPS/world-frame views in one replay bundle
 - Compare the baseline against optional ML detector backends
+- Browse replay events with jump-to-frame workflow in the 3D viewer
 
 ## Quick Start
 
@@ -145,6 +146,11 @@ PYTHONPATH=src python3 -m depthyn.cli replay \
   --zone-config examples/zones/sample-yard.json
 ```
 
+When a replay contains zone-driven scene events, the 3D viewer now shows:
+- an `Events` panel with jump-to-frame actions
+- event markers on the playback scrubber
+- track-focused review when you jump from an event
+
 ### Evaluate against Gemini/Ouster logs
 
 ```bash
@@ -206,11 +212,23 @@ WebGL-based 3D point cloud viewer built with Three.js:
 - Ego marker with forward arrow, plus moving GPS-aligned pose in world replay mode
 - `Sensor / World` toggle when the replay bundle includes GPS-aligned data
 - `Spatial / Scanline` toggle, with `Scanline` scoped to sensor view
+- Event list with jump-to-frame workflow for zone/dwell replay review
+- Timeline event markers on the playback scrubber
 - Orbit/pan/zoom controls with ground grid
 - Frame playback with slider, speed control, keyboard shortcuts (Space, Arrow keys)
 - Dark theme UI
 
 The viewer loads the same replay JSON produced by the `replay` command.
+
+### Viewer Screenshots
+
+World view with GPS-aligned route context:
+
+![Depthyn world viewer](docs/images/viewer-world.png)
+
+Sensor view for LiDAR-native inspection:
+
+![Depthyn sensor viewer](docs/images/viewer-sensor.png)
 
 ## Ouster Pcap Source
 

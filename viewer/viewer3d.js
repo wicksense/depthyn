@@ -33,6 +33,26 @@ function formatLabel(label) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function formatEventType(eventType) {
+  const value = String(eventType || "event");
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function eventTypeColor(eventType) {
+  switch (eventType) {
+    case "entered":
+      return "#7ee787";
+    case "dwell":
+      return "#ffd166";
+    case "exited":
+      return "#ff8a80";
+    case "crossed":
+      return "#59b8ff";
+    default:
+      return "#8c93b0";
+  }
+}
+
 function isScanlineMode() {
   return state.viewMode === "scanline";
 }
@@ -56,6 +76,7 @@ const state = {
   viewMode: "spatial",
   referenceFrame: "sensor",
   classVisibility: {},
+  eventTimeline: [],
   pointOwnership: {
     byDetectionId: new Map(),
   },
@@ -1882,6 +1903,82 @@ function selectObject(selection) {
 
 // ─── Sidebar panels ─────────────────────────────────────────────
 
+function buildEventTimeline(bundle) {
+  if (!bundle?.event_summaries?.length) return [];
+  const frameByTimestamp = new Map(
+    bundle.frame_summaries.map((frame, index) => [frame.timestamp_ns, index]),
+  );
+  const trackLabelById = new Map(
+    (bundle.track_summaries || []).map((track) => [track.track_id, track.label || "object"]),
+  );
+  return bundle.event_summaries
+    .map((event, index) => ({
+      ...event,
+      key: `${event.timestamp_ns}-${event.track_id}-${event.zone_id}-${index}`,
+      frame_index: frameByTimestamp.get(event.timestamp_ns) ?? 0,
+      label: trackLabelById.get(event.track_id) || "object",
+    }))
+    .sort((left, right) => left.frame_index - right.frame_index);
+}
+
+function renderEventMarkers(bundle) {
+  const markersEl = document.getElementById("frame-event-markers");
+  if (!markersEl) return;
+  const frameCount = Math.max(1, bundle?.frame_summaries?.length || 1);
+  const timeline = state.eventTimeline || [];
+  if (!timeline.length) {
+    markersEl.innerHTML = "";
+    return;
+  }
+  markersEl.innerHTML = timeline.map((event) => {
+    const left = frameCount <= 1
+      ? 0
+      : (event.frame_index / (frameCount - 1)) * 100;
+    return `<button class="event-marker" data-event-key="${event.key}" title="${formatEventType(event.event_type)} · ${event.zone_name} · frame ${event.frame_index + 1}" style="left:${left}%;background:${eventTypeColor(event.event_type)}"></button>`;
+  }).join("");
+}
+
+function renderEventPanel(bundle) {
+  const eventListEl = document.getElementById("event-list");
+  if (!eventListEl) return;
+  const timeline = state.eventTimeline || [];
+  if (!timeline.length) {
+    eventListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No scene events in this replay.</div>';
+    return;
+  }
+
+  const currentFrame = state.frameIndex;
+  const windowStart = Math.max(0, currentFrame - 15);
+  const windowEnd = currentFrame + 20;
+  const nearby = timeline.filter((event) => event.frame_index >= windowStart && event.frame_index <= windowEnd);
+  const visibleEvents = nearby.length ? nearby : timeline.slice(0, 24);
+
+  eventListEl.innerHTML = visibleEvents.map((event) => {
+    const isCurrent = event.frame_index === currentFrame;
+    const badgeColor = eventTypeColor(event.event_type);
+    const label = formatLabel(event.label);
+    const dwell = event.dwell_seconds != null ? ` · ${event.dwell_seconds.toFixed(1)}s` : "";
+    return `<div class="event-card${isCurrent ? " is-current" : ""}">
+      <button class="event-jump" data-event-key="${event.key}">Jump</button>
+      <div class="event-main">
+        <div class="event-title">
+          <span class="event-badge" style="background:${badgeColor}">${formatEventType(event.event_type)}</span>
+          <span>${event.zone_name}</span>
+        </div>
+        <div class="event-subtitle">Track #${event.track_id} · ${label}${dwell}</div>
+      </div>
+      <div class="event-meta">F${event.frame_index + 1}</div>
+    </div>`;
+  }).join("");
+}
+
+function jumpToEventByKey(eventKey) {
+  const event = (state.eventTimeline || []).find((item) => item.key === eventKey);
+  if (!event) return;
+  setFrameIndex(event.frame_index);
+  selectObject({ kind: "track", id: event.track_id });
+}
+
 function updateSidebar() {
   const statsEl = document.getElementById("scene-stats");
   const objectsEl = document.getElementById("object-list");
@@ -1895,6 +1992,8 @@ function updateSidebar() {
     statsEl.innerHTML = "";
     classControlsEl.innerHTML = "";
     objectsEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Open a replay JSON to begin.</div>';
+    renderEventPanel(null);
+    renderEventMarkers(null);
     return;
   }
 
@@ -1992,6 +2091,9 @@ function updateSidebar() {
       </div>`;
     }).join("");
   }
+
+  renderEventPanel(bundle);
+  renderEventMarkers(bundle);
 }
 
 function buildLegend() {
@@ -2083,6 +2185,7 @@ function setBundle(bundle) {
   state.selected = null;
   state.referenceFrame = bundle.reference_frame || "sensor";
   state.classVisibility = {};
+  state.eventTimeline = buildEventTimeline(bundle);
   document.getElementById("inspect-panel").style.display = "none";
   initializeClassVisibility(bundle);
 
@@ -2254,6 +2357,18 @@ document.getElementById("object-list").addEventListener("click", (e) => {
   if (kind === "track") {
     selectObject({ kind: "track", id: Number(rawId.replace("track-", "")) });
   }
+});
+
+document.getElementById("event-list").addEventListener("click", (e) => {
+  const jumpButton = e.target.closest(".event-jump");
+  if (!jumpButton) return;
+  jumpToEventByKey(jumpButton.dataset.eventKey);
+});
+
+document.getElementById("frame-event-markers").addEventListener("click", (e) => {
+  const marker = e.target.closest(".event-marker");
+  if (!marker) return;
+  jumpToEventByKey(marker.dataset.eventKey);
 });
 
 updateReferenceFrameUI();

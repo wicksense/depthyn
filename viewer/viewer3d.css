@@ -165,6 +165,41 @@ canvas { display: block; }
   accent-color: var(--accent);
 }
 
+#frame-slider-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+#frame-event-markers {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: -3px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.event-marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 10px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  opacity: 0.9;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(7, 9, 13, 0.55);
+}
+
+.event-marker:hover {
+  height: 13px;
+  top: -1px;
+}
+
 #frame-counter {
   font-size: 13px;
   color: var(--text-muted);
@@ -250,6 +285,14 @@ canvas { display: block; }
   overflow-y: auto;
 }
 
+#event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 #class-controls {
   display: flex;
   flex-direction: column;
@@ -326,6 +369,83 @@ canvas { display: block; }
 .obj-label { font-weight: 600; }
 
 .obj-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.event-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.event-card.is-current {
+  background: rgba(126, 231, 135, 0.08);
+  border-color: rgba(126, 231, 135, 0.32);
+}
+
+.event-jump {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.event-jump:hover {
+  background: rgba(59, 139, 255, 0.12);
+  color: var(--text);
+}
+
+.event-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.event-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.event-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #f4f6fb;
+}
+
+.event-subtitle {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-meta {
   color: var(--text-muted);
   font-size: 11px;
   text-align: right;

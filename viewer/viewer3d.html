@@ -36,7 +36,10 @@
       <button id="btn-prev" title="Previous frame">&lsaquo;</button>
       <button id="btn-play" title="Play / Pause">Play</button>
       <button id="btn-next" title="Next frame">&rsaquo;</button>
-      <input id="frame-slider" type="range" min="0" max="0" value="0">
+      <div id="frame-slider-wrap">
+        <div id="frame-event-markers"></div>
+        <input id="frame-slider" type="range" min="0" max="0" value="0">
+      </div>
       <span id="frame-counter">0 / 0</span>
       <label>
         Speed
@@ -95,6 +98,10 @@
       <section id="objects-panel">
         <h2>Objects</h2>
         <div id="object-list"></div>
+      </section>
+      <section id="events-panel">
+        <h2>Events</h2>
+        <div id="event-list"></div>
       </section>
       <section id="overlays-panel">
         <h2>Overlays</h2>
