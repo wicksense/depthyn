@@ -7,7 +7,9 @@
     <link rel="stylesheet" href="viewer3d.css">
   </head>
   <body>
-    <div id="canvas-container"></div>
+    <div id="canvas-container">
+      <canvas id="range-canvas"></canvas>
+    </div>
 
     <header id="top-bar">
       <div class="top-left">
@@ -15,6 +17,10 @@
         <span class="subtitle" id="status-label">No data loaded</span>
       </div>
       <div class="top-right">
+        <div id="view-mode-switch">
+          <button id="btn-view-spatial" class="mode-btn is-active" type="button">Spatial</button>
+          <button id="btn-view-scanline" class="mode-btn" type="button">Scanline</button>
+        </div>
         <label class="file-btn">
           Open Replay
           <input id="file-input" type="file" accept=".json,application/json">

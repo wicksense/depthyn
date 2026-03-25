@@ -33,6 +33,10 @@ function formatLabel(label) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function isScanlineMode() {
+  return state.viewMode === "scanline";
+}
+
 // ─── State ───────────────────────────────────────────────────────
 
 const state = {
@@ -41,6 +45,7 @@ const state = {
   playing: false,
   timer: null,
   selected: null,  // selected object id
+  viewMode: "spatial",
   classVisibility: {},
   pointOwnership: {
     byDetectionId: new Map(),
@@ -61,6 +66,8 @@ const state = {
 // ─── Three.js setup ──────────────────────────────────────────────
 
 const container = document.getElementById("canvas-container");
+const rangeCanvas = document.getElementById("range-canvas");
+const rangeCtx = rangeCanvas.getContext("2d");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -779,6 +786,7 @@ function buildEvents(frame, bundle) {
 function updateLabels() {
   labelContainer.innerHTML = "";
   if (!state.bundle) return;
+  if (isScanlineMode()) return;
 
   const halfW = window.innerWidth / 2;
   const halfH = window.innerHeight / 2;
@@ -1074,6 +1082,166 @@ function renderInspectScanline(points, label) {
   ctx.font = "11px Inter, sans-serif";
   ctx.fillText("Scanline view", 12, 18);
   ctx.fillText(`${points.length} pts`, width - 58, 18);
+}
+
+function pointToAngles(point) {
+  return {
+    azimuth: Math.atan2(point[1], point[0]),
+    elevation: Math.atan2(point[2], Math.hypot(point[0], point[1])),
+  };
+}
+
+function rangeFrameExtents(points) {
+  if (!points.length) {
+    return { elevationMin: -0.35, elevationMax: 0.25 };
+  }
+  const elevations = points.map((point) => pointToAngles(point).elevation);
+  return {
+    elevationMin: Math.min(...elevations),
+    elevationMax: Math.max(...elevations),
+  };
+}
+
+function rangePointToCanvas(point, width, height, extents) {
+  const { azimuth, elevation } = pointToAngles(point);
+  const elevationSpan = Math.max(0.01, extents.elevationMax - extents.elevationMin);
+  return {
+    x: ((azimuth + Math.PI) / (Math.PI * 2)) * width,
+    y: height - (((elevation - extents.elevationMin) / elevationSpan) * height),
+  };
+}
+
+function drawRangeGrid(width, height) {
+  rangeCtx.strokeStyle = "rgba(255,255,255,0.08)";
+  rangeCtx.lineWidth = 1;
+  const horizontal = 6;
+  const vertical = 8;
+  for (let i = 1; i < horizontal; i++) {
+    const y = (height / horizontal) * i;
+    rangeCtx.beginPath();
+    rangeCtx.moveTo(0, y);
+    rangeCtx.lineTo(width, y);
+    rangeCtx.stroke();
+  }
+  for (let i = 1; i < vertical; i++) {
+    const x = (width / vertical) * i;
+    rangeCtx.beginPath();
+    rangeCtx.moveTo(x, 0);
+    rangeCtx.lineTo(x, height);
+    rangeCtx.stroke();
+  }
+}
+
+function drawRangePointSet(points, color, radius, alpha, width, height, extents) {
+  if (!points.length) return;
+  rangeCtx.fillStyle = color;
+  rangeCtx.globalAlpha = alpha;
+  for (const point of points) {
+    const canvasPoint = rangePointToCanvas(point, width, height, extents);
+    rangeCtx.beginPath();
+    rangeCtx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2);
+    rangeCtx.fill();
+  }
+  rangeCtx.globalAlpha = 1;
+}
+
+function drawRangeDetections(frame, width, height, extents, selectedInfo) {
+  const selectedDetId = selectedInfo?.detection?.detection_id || null;
+  for (const detection of frame.detections) {
+    if (!isLabelVisible(detection.label)) continue;
+    const ownedPoints = ownedPointsForDetection(detection.detection_id).map((point) => point.sourcePosition);
+    if (!ownedPoints.length) continue;
+
+    const canvasPoints = ownedPoints.map((point) => rangePointToCanvas(point, width, height, extents));
+    const xs = canvasPoints.map((point) => point.x);
+    const ys = canvasPoints.map((point) => point.y);
+    const minX = Math.max(8, Math.min(...xs) - 8);
+    const maxX = Math.min(width - 8, Math.max(...xs) + 8);
+    const minY = Math.max(8, Math.min(...ys) - 8);
+    const maxY = Math.min(height - 8, Math.max(...ys) + 8);
+    const isSelected = detection.detection_id === selectedDetId;
+    const color = isSelected ? "#fff0c2" : labelColor(detection.label).hex;
+
+    rangeCtx.strokeStyle = color;
+    rangeCtx.lineWidth = isSelected ? 2.2 : 1.2;
+    rangeCtx.globalAlpha = isSelected ? 0.95 : 0.55;
+    rangeCtx.strokeRect(minX, minY, Math.max(6, maxX - minX), Math.max(6, maxY - minY));
+    rangeCtx.globalAlpha = isSelected ? 0.16 : 0.06;
+    rangeCtx.fillStyle = color;
+    rangeCtx.fillRect(minX, minY, Math.max(6, maxX - minX), Math.max(6, maxY - minY));
+    rangeCtx.globalAlpha = 1;
+
+    rangeCtx.fillStyle = color;
+    rangeCtx.font = isSelected ? "700 12px Inter, sans-serif" : "600 11px Inter, sans-serif";
+    const scoreText = detection.score != null ? ` ${Math.round(detection.score * 100)}%` : "";
+    rangeCtx.fillText(`${formatLabel(detection.label)}${scoreText}`, minX, Math.max(14, minY - 6));
+  }
+}
+
+function renderRangeView(frame, selectedInfo) {
+  if (!rangeCanvas) return;
+  const width = Math.max(1, container.clientWidth);
+  const height = Math.max(1, container.clientHeight);
+  if (rangeCanvas.width !== width || rangeCanvas.height !== height) {
+    rangeCanvas.width = width;
+    rangeCanvas.height = height;
+  }
+
+  rangeCtx.clearRect(0, 0, width, height);
+  rangeCtx.fillStyle = "#07090d";
+  rangeCtx.fillRect(0, 0, width, height);
+  drawRangeGrid(width, height);
+
+  const points = frame.preview_points || [];
+  const extents = rangeFrameExtents(points);
+  const selectedDetId = selectedInfo?.detection?.detection_id || null;
+  const visibleDetections = frame.detections.filter((detection) => isLabelVisible(detection.label));
+
+  if (state.overlays.rawPoints) {
+    drawRangePointSet(points, "rgba(139,111,191,1)", 1.1, 0.38, width, height, extents);
+  }
+
+  if (state.overlays.objectPoints) {
+    for (const detection of visibleDetections) {
+      const ownedPoints = ownedPointsForDetection(detection.detection_id).map((point) => point.sourcePosition);
+      if (!ownedPoints.length) continue;
+      const isSelected = detection.detection_id === selectedDetId;
+      drawRangePointSet(
+        ownedPoints,
+        labelColor(detection.label).hex,
+        isSelected ? 2.0 : 1.6,
+        isSelected ? 0.95 : (selectedInfo ? 0.32 : 0.78),
+        width,
+        height,
+        extents,
+      );
+    }
+  }
+
+  if (state.overlays.selectedPoints && selectedInfo?.detection) {
+    const ownedPoints = ownedPointsForDetection(selectedInfo.detection.detection_id).map((point) => point.sourcePosition);
+    drawRangePointSet(ownedPoints, "#fff5b8", 2.4, 0.95, width, height, extents);
+  }
+
+  if (state.overlays.boxes) {
+    drawRangeDetections(frame, width, height, extents, selectedInfo);
+  }
+
+  rangeCtx.fillStyle = "rgba(212, 216, 228, 0.76)";
+  rangeCtx.font = "600 12px Inter, sans-serif";
+  rangeCtx.fillText("Full-frame scanline view", 18, 24);
+  rangeCtx.fillText(`${points.length} preview pts`, width - 126, 24);
+}
+
+function updateViewModeUI() {
+  const spatialButton = document.getElementById("btn-view-spatial");
+  const scanlineButton = document.getElementById("btn-view-scanline");
+  const spatialActive = state.viewMode === "spatial";
+  spatialButton.classList.toggle("is-active", spatialActive);
+  scanlineButton.classList.toggle("is-active", !spatialActive);
+  renderer.domElement.style.display = spatialActive ? "block" : "none";
+  rangeCanvas.style.display = spatialActive ? "none" : "block";
+  labelContainer.style.display = spatialActive ? "block" : "none";
 }
 
 function findMatchedTrackForDetection(detection, tracks) {
@@ -1415,6 +1583,7 @@ function setBundle(bundle) {
   camera.position.set(cx, cy - 50, 40);
   buildEgoMarker();
   applyOverlayVisibility();
+  updateViewModeUI();
 
   showFrame();
 }
@@ -1432,6 +1601,7 @@ function showFrame() {
   buildEvents(frame, state.bundle);
   applyOverlayVisibility();
   updateSidebar();
+  renderRangeView(frame, selectedInfo);
   if (selectedInfo?.detection) {
     renderInspectScanline(ownedPointsForDetection(selectedInfo.detection.detection_id), selectedInfo.detection.label);
   } else if (selectedInfo?.track) {
@@ -1496,6 +1666,18 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   setBundle(JSON.parse(text));
 });
 
+document.getElementById("btn-view-spatial").addEventListener("click", () => {
+  state.viewMode = "spatial";
+  updateViewModeUI();
+  showFrame();
+});
+
+document.getElementById("btn-view-scanline").addEventListener("click", () => {
+  state.viewMode = "scanline";
+  updateViewModeUI();
+  showFrame();
+});
+
 document.getElementById("inspect-close").addEventListener("click", hideInspectPanel);
 document.getElementById("class-controls").addEventListener("change", (e) => {
   const toggle = e.target.closest("[data-class-label]");
@@ -1556,6 +1738,9 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (state.bundle) {
+    showFrame();
+  }
 });
 
 window.addEventListener("keydown", (e) => {
@@ -1590,5 +1775,6 @@ function animate() {
   updateLabels();
 }
 
+updateViewModeUI();
 bootstrap();
 animate();
