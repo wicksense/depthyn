@@ -60,6 +60,12 @@ canvas { display: block; }
 
 #top-bar > * { pointer-events: auto; }
 
+.top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 #top-bar h1 {
   font-size: 18px;
   font-weight: 700;
@@ -97,7 +103,16 @@ canvas { display: block; }
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface);
-  margin-right: 10px;
+}
+
+#reference-frame-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .mode-btn {
@@ -179,7 +194,7 @@ canvas { display: block; }
 
 #sidebar {
   position: fixed;
-  top: 52px;
+  top: 76px;
   right: 0;
   bottom: 46px;
   width: 280px;
