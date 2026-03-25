@@ -42,6 +42,9 @@ const state = {
   timer: null,
   selected: null,  // selected object id
   classVisibility: {},
+  pointOwnership: {
+    byDetectionId: new Map(),
+  },
   overlays: {
     rawPoints: true,
     objectPoints: true,
@@ -174,7 +177,7 @@ function assignPointOwner(point, detections) {
   let best = null;
   let bestDist = Infinity;
   for (const detection of detections) {
-    if (!pointInVolume(point, detection)) continue;
+    if (!pointInDetectionVolume(point, detection)) continue;
     const dx = point[0] - detection.centroid[0];
     const dy = point[1] - detection.centroid[1];
     const dz = point[2] - detection.centroid[2];
@@ -217,6 +220,7 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
   const colors = new Float32Array(points.length * 3);
   const objectPoints = [];
   const highlightPoints = [];
+  const byDetectionId = new Map();
   const visibleDetections = detections.filter((detection) => isLabelVisible(detection.label));
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
   const selectedVolume = selectedInfo?.volume || null;
@@ -249,17 +253,26 @@ function buildPointCloud(points, detections = [], selectedInfo = null) {
     const owner = assignPointOwner(points[i], visibleDetections);
     if (owner) {
       const ownerColor = labelColor(owner.label);
-      objectPoints.push({
-        position: [px, py, pz],
+      const ownedPoint = {
+        position: [points[i][0], points[i][1], points[i][2]],
+        sourcePosition: points[i],
         color: ownerColor,
         isSelected: owner.detection_id === selectedDetId,
-      });
+      };
+      objectPoints.push(ownedPoint);
+      const existing = byDetectionId.get(owner.detection_id) || [];
+      existing.push(ownedPoint);
+      byDetectionId.set(owner.detection_id, existing);
     }
 
-    if (selectedVolume && pointInVolume(points[i], selectedVolume)) {
-      highlightPoints.push([px, py, pz]);
+    if (selectedVolume && pointInDetectionVolume(points[i], selectedVolume)) {
+      highlightPoints.push([points[i][0], points[i][1], points[i][2]]);
     }
   }
+
+  state.pointOwnership = {
+    byDetectionId,
+  };
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -942,6 +955,9 @@ function showInspectPanel(det, tracks) {
         <div class="inspect-score">${det.score != null ? `${Math.round(det.score * 100)}%` : "Tracked"}</div>
       </div>
     </div>
+    <div class="inspect-scanline-block">
+      <canvas id="inspect-scanline" width="252" height="120"></canvas>
+    </div>
   `;
 
   content.innerHTML = hero + rows.map(([k, v]) =>
@@ -949,6 +965,7 @@ function showInspectPanel(det, tracks) {
   ).join("");
 
   panel.style.display = "block";
+  renderInspectScanline(ownedPointsForDetection(det.detection_id), det.label);
 }
 
 function hideInspectPanel() {
@@ -968,6 +985,95 @@ function pointInVolume(point, volume) {
     point[2] >= volume.bbox_min[2] &&
     point[2] <= volume.bbox_max[2]
   );
+}
+
+function volumeDimensions(volume) {
+  return [
+    Math.abs(volume.bbox_max[0] - volume.bbox_min[0]),
+    Math.abs(volume.bbox_max[1] - volume.bbox_min[1]),
+    Math.abs(volume.bbox_max[2] - volume.bbox_min[2]),
+  ];
+}
+
+function pointInDetectionVolume(point, volume) {
+  if (!volume?.centroid || volume.heading_rad == null) {
+    return pointInVolume(point, volume);
+  }
+
+  const [dx, dy, dz] = [
+    point[0] - volume.centroid[0],
+    point[1] - volume.centroid[1],
+    point[2] - volume.centroid[2],
+  ];
+  const cos = Math.cos(-volume.heading_rad);
+  const sin = Math.sin(-volume.heading_rad);
+  const localX = dx * cos - dy * sin;
+  const localY = dx * sin + dy * cos;
+  const [sx, sy, sz] = volumeDimensions(volume);
+  return (
+    Math.abs(localX) <= sx / 2 &&
+    Math.abs(localY) <= sy / 2 &&
+    Math.abs(dz) <= sz / 2
+  );
+}
+
+function ownedPointsForDetection(detectionId) {
+  return state.pointOwnership.byDetectionId.get(detectionId) || [];
+}
+
+function renderInspectScanline(points, label) {
+  const canvas = document.getElementById("inspect-scanline");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(8, 10, 14, 0.96)";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const y = (height / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  if (!points.length) {
+    ctx.fillStyle = "rgba(212, 216, 228, 0.56)";
+    ctx.font = "12px Inter, sans-serif";
+    ctx.fillText("No owned points in preview", 14, height / 2);
+    return;
+  }
+
+  const color = labelColor(label).hex;
+  const azimuths = points.map((point) => Math.atan2(point.sourcePosition[1], point.sourcePosition[0]));
+  const elevations = points.map((point) => Math.atan2(point.sourcePosition[2], Math.hypot(point.sourcePosition[0], point.sourcePosition[1])));
+  const azMin = Math.min(...azimuths);
+  const azMax = Math.max(...azimuths);
+  const elMin = Math.min(...elevations);
+  const elMax = Math.max(...elevations);
+  const azSpan = Math.max(0.01, azMax - azMin);
+  const elSpan = Math.max(0.01, elMax - elMin);
+
+  ctx.fillStyle = color;
+  for (let i = 0; i < points.length; i++) {
+    const x = ((azimuths[i] - azMin) / azSpan) * (width - 18) + 9;
+    const y = height - (((elevations[i] - elMin) / elSpan) * (height - 18) + 9);
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "rgba(212, 216, 228, 0.72)";
+  ctx.font = "11px Inter, sans-serif";
+  ctx.fillText("Scanline view", 12, 18);
+  ctx.fillText(`${points.length} pts`, width - 58, 18);
 }
 
 function findMatchedTrackForDetection(detection, tracks) {
@@ -1060,12 +1166,21 @@ function showTrackPanel(track) {
         <div class="inspect-score">${speed < 100 ? `${speed.toFixed(1)} m/s` : "noisy"}</div>
       </div>
     </div>
+    <div class="inspect-scanline-block">
+      <canvas id="inspect-scanline" width="252" height="120"></canvas>
+    </div>
   `;
 
   content.innerHTML = hero + rows.map(([k, v]) =>
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
   ).join("");
   panel.style.display = "block";
+
+  const matchedDetection = findMatchedDetectionForTrack(track, state.bundle?.frame_summaries?.[state.frameIndex]?.detections || []);
+  renderInspectScanline(
+    matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
+    matchedDetection?.label || track.label,
+  );
 }
 
 function selectObject(selection) {
@@ -1317,6 +1432,15 @@ function showFrame() {
   buildEvents(frame, state.bundle);
   applyOverlayVisibility();
   updateSidebar();
+  if (selectedInfo?.detection) {
+    renderInspectScanline(ownedPointsForDetection(selectedInfo.detection.detection_id), selectedInfo.detection.label);
+  } else if (selectedInfo?.track) {
+    const matchedDetection = findMatchedDetectionForTrack(selectedInfo.track, frame.detections);
+    renderInspectScanline(
+      matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
+      matchedDetection?.label || selectedInfo.track.label,
+    );
+  }
 
   document.getElementById("frame-counter").textContent =
     `${state.frameIndex + 1} / ${state.bundle.frame_summaries.length}`;
