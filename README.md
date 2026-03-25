@@ -191,6 +191,10 @@ The 3D viewer now includes a `Rules` panel for replay-first authoring:
   - click a start point and an end point in `Spatial`
 - edit rule fields in the sidebar
 - export the current reference frame's rules as JSON
+- `Apply Rules`
+  - re-evaluates the current replay in-memory using the authored rules
+- `Reset Preview`
+  - restores the original replay events from disk without reloading the file
 
 Important behavior:
 - authoring is reference-frame aware
@@ -198,6 +202,9 @@ Important behavior:
   - `Sensor` authoring is for sensor-local rule placement
 - `Scanline` is not an authoring mode
 - exported rule JSON is scoped to the currently selected reference frame
+- replay preview is also reference-frame aware
+  - applying rules in `World` re-evaluates world-frame tracks
+  - switching to `Sensor` can apply that frame's authored rules instead
 
 ### Evaluate against Gemini/Ouster logs
 
