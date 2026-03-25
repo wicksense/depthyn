@@ -107,12 +107,23 @@
             <button id="btn-add-tripwire" type="button">Add Tripwire</button>
           </div>
           <div class="rule-actions">
+            <button id="btn-load-saved-rules" type="button">Load Saved</button>
+            <button id="btn-save-rules" type="button">Save Rules</button>
+          </div>
+          <div class="rule-actions">
+            <label class="rule-file-btn">
+              Import Rules
+              <input id="rule-file-input" type="file" accept=".json,application/json">
+            </label>
             <button id="btn-apply-rules" type="button">Apply Rules</button>
+          </div>
+          <div class="rule-actions">
             <button id="btn-reset-rule-preview" type="button">Reset Preview</button>
+            <button id="btn-export-rules-json" type="button">Export Rules JSON</button>
           </div>
           <div class="rule-actions">
             <button id="btn-cancel-rule-draw" type="button">Cancel Draw</button>
-            <button id="btn-export-rules-json" type="button">Export Rules JSON</button>
+            <button id="btn-clear-rules" type="button">Clear Rules</button>
           </div>
           <div id="rule-draw-status">No authoring action in progress.</div>
         </div>
@@ -120,6 +131,7 @@
       </section>
       <section id="events-panel">
         <h2>Events</h2>
+        <div id="event-summary"></div>
         <div id="event-controls">
           <label class="filter-row">
             <span>Type</span>

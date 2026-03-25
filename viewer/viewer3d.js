@@ -47,6 +47,28 @@ function formatDirection(direction) {
     .join(" ");
 }
 
+function formatSentenceCase(value) {
+  const text = String(value || "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+}
+
+function describeEvent(event) {
+  const label = formatLabel(event.label);
+  const ruleName = event.rule_name || event.zone_name || "rule";
+  switch (event.event_type) {
+    case "crossed":
+      return `${label} crossed ${ruleName}${event.direction ? ` ${formatDirection(event.direction).toLowerCase()}` : ""}`;
+    case "entered":
+      return `${label} entered ${ruleName}`;
+    case "exited":
+      return `${label} exited ${ruleName}`;
+    case "dwell":
+      return `${label} dwelled in ${ruleName}${event.dwell_seconds != null ? ` for ${event.dwell_seconds.toFixed(1)}s` : ""}`;
+    default:
+      return `${label} triggered ${formatSentenceCase(event.event_type)} on ${ruleName}`;
+  }
+}
+
 function eventTypeColor(eventType) {
   switch (eventType) {
     case "entered":
@@ -119,6 +141,13 @@ function emptyRuleState() {
   return { zones: [], tripwires: [] };
 }
 
+function cloneRuleState(rules) {
+  return {
+    zones: (rules?.zones || []).map(cloneZoneDefinition),
+    tripwires: (rules?.tripwires || []).map(cloneTripwireDefinition),
+  };
+}
+
 function currentRuleState() {
   const frame = currentReferenceFrame();
   if (!state.ruleSets[frame]) {
@@ -141,6 +170,10 @@ function initializeRuleSets(bundle) {
     zones: (bundle?.zone_definitions || []).map(cloneZoneDefinition),
     tripwires: (bundle?.tripwire_definitions || []).map(cloneTripwireDefinition),
   };
+}
+
+function replaceCurrentRuleState(rules) {
+  state.ruleSets[currentReferenceFrame()] = cloneRuleState(rules);
 }
 
 function nextRuleId(kind) {
@@ -195,6 +228,57 @@ function addAuthoredTripwire(pointA, pointB) {
   });
 }
 
+function normalizeZoneGeometry(zone) {
+  const minX = Math.min(zone.min_xy[0], zone.max_xy[0]);
+  const minY = Math.min(zone.min_xy[1], zone.max_xy[1]);
+  const maxX = Math.max(zone.min_xy[0], zone.max_xy[0]);
+  const maxY = Math.max(zone.min_xy[1], zone.max_xy[1]);
+  zone.min_xy = [roundPoint(minX), roundPoint(minY)];
+  zone.max_xy = [roundPoint(maxX), roundPoint(maxY)];
+}
+
+function updateZoneHandle(zone, handle, point) {
+  switch (handle) {
+    case "minmin":
+      zone.min_xy = [point[0], point[1]];
+      break;
+    case "maxmin":
+      zone.max_xy = [point[0], zone.max_xy[1]];
+      zone.min_xy = [zone.min_xy[0], point[1]];
+      break;
+    case "maxmax":
+      zone.max_xy = [point[0], point[1]];
+      break;
+    case "minmax":
+      zone.min_xy = [point[0], zone.min_xy[1]];
+      zone.max_xy = [zone.max_xy[0], point[1]];
+      break;
+    default:
+      return;
+  }
+  normalizeZoneGeometry(zone);
+}
+
+function updateTripwireHandle(tripwire, handle, point) {
+  if (handle === "start") {
+    tripwire.start_xy = [roundPoint(point[0]), roundPoint(point[1])];
+  } else if (handle === "end") {
+    tripwire.end_xy = [roundPoint(point[0]), roundPoint(point[1])];
+  }
+}
+
+function ruleBySelection(selection) {
+  if (!selection) return null;
+  const rules = currentRuleState();
+  if (selection.kind === "zone") {
+    return rules.zones.find((zone) => zone.zone_id === selection.id) || null;
+  }
+  if (selection.kind === "tripwire") {
+    return rules.tripwires.find((tripwire) => tripwire.tripwire_id === selection.id) || null;
+  }
+  return null;
+}
+
 function commitRulePoint(point) {
   if (!state.authoring.mode) return;
   state.authoring.points.push(point);
@@ -230,6 +314,68 @@ function exportRulesJson() {
     JSON.stringify(payload, null, 2),
     "application/json",
   );
+}
+
+async function fetchJson(url, options = undefined) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function loadServiceSession() {
+  try {
+    state.serviceSession = await fetchJson("/api/session");
+  } catch {
+    state.serviceSession = null;
+  }
+}
+
+async function loadSavedRulesForFrame(frame) {
+  if (!state.serviceSession) return false;
+  try {
+    const payload = await fetchJson(`/api/rules?frame=${encodeURIComponent(frame)}`);
+    state.ruleSets[frame] = cloneRuleState(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadSavedRulesIntoCurrentFrame() {
+  const loaded = await loadSavedRulesForFrame(currentReferenceFrame());
+  if (!loaded) return false;
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
+  showFrame();
+  return true;
+}
+
+async function saveCurrentRulesToService() {
+  if (!state.serviceSession) return false;
+  const payload = {
+    reference_frame: currentReferenceFrame(),
+    ...cloneRuleState(currentRuleState()),
+  };
+  await fetchJson(`/api/rules?frame=${encodeURIComponent(currentReferenceFrame())}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return true;
+}
+
+async function importRulesFromFile(file) {
+  const text = await file.text();
+  const payload = JSON.parse(text);
+  replaceCurrentRuleState(payload);
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
+  showFrame();
 }
 
 function cloneBundle(bundle) {
@@ -457,6 +603,8 @@ const state = {
     label: "all",
     rule: "all",
   },
+  serviceSession: null,
+  selectedRule: null,
   ruleSets: {},
   authoring: {
     mode: null,
@@ -577,6 +725,8 @@ document.body.appendChild(labelContainer);
 
 // Store box meshes for raycasting
 let clickableBoxes = [];
+let clickableRuleHandles = [];
+let ruleDragState = null;
 
 // ─── Circle sprite for round points ─────────────────────────────
 
@@ -1386,6 +1536,7 @@ function buildEvents(frame, bundle) {
 
 function buildRuleOverlays() {
   ruleGroup.clear();
+  clickableRuleHandles = [];
   ruleGroup.userData = { labels: [] };
   if (!state.bundle || isScanlineMode()) return;
 
@@ -1402,9 +1553,10 @@ function buildRuleOverlays() {
       new THREE.Vector3(minXY[0], minXY[1], 0.06),
     ];
     const geometry = new THREE.BufferGeometry().setFromPoints(corners);
+    const isSelected = state.selectedRule?.kind === "zone" && state.selectedRule.id === zone.zone_id;
     const line = new THREE.Line(
       geometry,
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: isSelected ? 1.0 : 0.9 }),
     );
     ruleGroup.add(line);
 
@@ -1419,6 +1571,26 @@ function buildRuleOverlays() {
     fill.position.set((minXY[0] + maxXY[0]) / 2, (minXY[1] + maxXY[1]) / 2, 0.04);
     ruleGroup.add(fill);
 
+    const handles = [
+      { key: "minmin", point: [minXY[0], minXY[1]] },
+      { key: "maxmin", point: [maxXY[0], minXY[1]] },
+      { key: "maxmax", point: [maxXY[0], maxXY[1]] },
+      { key: "minmax", point: [minXY[0], maxXY[1]] },
+    ];
+    for (const handle of handles) {
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(isSelected ? 0.28 : 0.22, 12, 12),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: isSelected ? 0.95 : 0.75 }),
+      );
+      mesh.position.set(handle.point[0], handle.point[1], 0.14);
+      mesh.userData = {
+        ruleSelection: { kind: "zone", id: zone.zone_id },
+        handle: handle.key,
+      };
+      ruleGroup.add(mesh);
+      clickableRuleHandles.push(mesh);
+    }
+
     ruleGroup.userData.labels.push({
       text: zone.name,
       color,
@@ -1430,12 +1602,13 @@ function buildRuleOverlays() {
     const start = tripwire.start_xy || [0, 0];
     const end = tripwire.end_xy || [0, 0];
     const color = tripwire.color || "#59b8ff";
+    const isSelected = state.selectedRule?.kind === "tripwire" && state.selectedRule.id === tripwire.tripwire_id;
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(start[0], start[1], 0.08),
         new THREE.Vector3(end[0], end[1], 0.08),
       ]),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.92 }),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: isSelected ? 1.0 : 0.92 }),
     );
     ruleGroup.add(line);
 
@@ -1457,6 +1630,23 @@ function buildRuleOverlays() {
       new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.92 }),
     );
     ruleGroup.add(arrow);
+
+    for (const handle of [
+      { key: "start", point: start },
+      { key: "end", point: end },
+    ]) {
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(isSelected ? 0.28 : 0.22, 12, 12),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: isSelected ? 0.95 : 0.75 }),
+      );
+      mesh.position.set(handle.point[0], handle.point[1], 0.14);
+      mesh.userData = {
+        ruleSelection: { kind: "tripwire", id: tripwire.tripwire_id },
+        handle: handle.key,
+      };
+      ruleGroup.add(mesh);
+      clickableRuleHandles.push(mesh);
+    }
 
     ruleGroup.userData.labels.push({
       text: tripwire.name,
@@ -1497,6 +1687,12 @@ function buildRuleOverlays() {
       ruleGroup.children.at(-1)?.computeLineDistances?.();
     }
   }
+}
+
+function setSelectedRule(selection) {
+  state.selectedRule = selection;
+  buildRuleOverlays();
+  updateSidebar();
 }
 
 // ─── Project 3D labels to screen ─────────────────────────────────
@@ -2483,6 +2679,29 @@ function renderEventControls(bundle) {
   ruleEl.value = eventRules.some(([value]) => value === state.eventFilters.rule) ? state.eventFilters.rule : "all";
 }
 
+function renderEventSummary() {
+  const summaryEl = document.getElementById("event-summary");
+  if (!summaryEl) return;
+  const timeline = filteredEventTimeline();
+  if (!timeline.length) {
+    summaryEl.innerHTML = "";
+    return;
+  }
+  const counts = new Map();
+  for (const event of timeline) {
+    counts.set(event.event_type, (counts.get(event.event_type) || 0) + 1);
+  }
+  summaryEl.innerHTML = [...counts.entries()]
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([eventType, count]) => `
+      <div class="event-chip">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${eventTypeColor(eventType)}"></span>
+        ${formatEventType(eventType)} <strong>${count}</strong>
+      </div>
+    `)
+    .join("");
+}
+
 function exportEventsAsJson() {
   const timeline = filteredEventTimeline();
   const payload = {
@@ -2551,16 +2770,25 @@ function renderEventMarkers(bundle) {
 function renderEventPanel(bundle) {
   const eventListEl = document.getElementById("event-list");
   if (!eventListEl) return;
+  if (!bundle) {
+    document.getElementById("event-summary").innerHTML = "";
+    eventListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Open a replay JSON to inspect events.</div>';
+    return;
+  }
   const allEvents = state.eventTimeline || [];
   const timeline = filteredEventTimeline();
   if (!allEvents.length) {
     eventListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No scene events in this replay.</div>';
+    renderEventSummary();
     return;
   }
   if (!timeline.length) {
     eventListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No scene events match the current filters.</div>';
+    renderEventSummary();
     return;
   }
+
+  renderEventSummary();
 
   const currentFrame = state.frameIndex;
   const windowStart = Math.max(0, currentFrame - 15);
@@ -2571,18 +2799,17 @@ function renderEventPanel(bundle) {
   eventListEl.innerHTML = visibleEvents.map((event) => {
     const isCurrent = event.frame_index === currentFrame;
     const badgeColor = eventTypeColor(event.event_type);
-    const label = formatLabel(event.label);
-    const dwell = event.dwell_seconds != null ? ` · ${event.dwell_seconds.toFixed(1)}s` : "";
     const direction = event.direction ? `<span class="event-direction">${formatDirection(event.direction)}</span>` : "";
+    const sentence = describeEvent(event);
     return `<div class="event-card${isCurrent ? " is-current" : ""}">
       <button class="event-jump" data-event-key="${event.key}">Jump</button>
       <div class="event-main">
         <div class="event-title">
           <span class="event-badge" style="background:${badgeColor}">${formatEventType(event.event_type)}</span>
-          <span>${event.rule_name}</span>
+          <span>${sentence}</span>
         </div>
         <div class="event-subtitle">
-          <span>Track #${event.track_id} · ${label}${dwell}</span>
+          <span>Track #${event.track_id} · ${event.rule_kind}</span>
           ${direction}
         </div>
       </div>
@@ -2617,10 +2844,14 @@ function renderRulePanel(bundle) {
 
   const cards = [];
   for (const zone of rules.zones) {
+    const isSelected = state.selectedRule?.kind === "zone" && state.selectedRule.id === zone.zone_id;
     cards.push(`
-      <div class="rule-card" data-rule-kind="zone" data-rule-id="${zone.zone_id}">
+      <div class="rule-card${isSelected ? " is-selected" : ""}" data-rule-kind="zone" data-rule-id="${zone.zone_id}">
         <div class="rule-card-header">
-          <span class="rule-kind-badge">Zone</span>
+          <div class="rule-card-header-main">
+            <span class="rule-kind-badge">Zone</span>
+            <span>${zone.name}</span>
+          </div>
           <button class="rule-delete" data-rule-kind="zone" data-rule-id="${zone.zone_id}">Delete</button>
         </div>
         <div class="rule-form">
@@ -2633,10 +2864,14 @@ function renderRulePanel(bundle) {
     `);
   }
   for (const tripwire of rules.tripwires) {
+    const isSelected = state.selectedRule?.kind === "tripwire" && state.selectedRule.id === tripwire.tripwire_id;
     cards.push(`
-      <div class="rule-card" data-rule-kind="tripwire" data-rule-id="${tripwire.tripwire_id}">
+      <div class="rule-card${isSelected ? " is-selected" : ""}" data-rule-kind="tripwire" data-rule-id="${tripwire.tripwire_id}">
         <div class="rule-card-header">
-          <span class="rule-kind-badge">Tripwire</span>
+          <div class="rule-card-header-main">
+            <span class="rule-kind-badge">Tripwire</span>
+            <span>${tripwire.name}</span>
+          </div>
           <button class="rule-delete" data-rule-kind="tripwire" data-rule-id="${tripwire.tripwire_id}">Delete</button>
         </div>
         <div class="rule-form">
@@ -3004,7 +3239,14 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const text = await file.text();
-  setBundle(JSON.parse(text));
+  const bundle = JSON.parse(text);
+  setBundle(bundle);
+  if (state.serviceSession) {
+    for (const frame of bundle.available_reference_frames || [bundle.reference_frame || "sensor"]) {
+      await loadSavedRulesForFrame(frame);
+    }
+    showFrame();
+  }
 });
 
 document.getElementById("btn-view-spatial").addEventListener("click", () => {
@@ -3132,6 +3374,43 @@ document.getElementById("btn-export-rules-json").addEventListener("click", () =>
   exportRulesJson();
 });
 
+document.getElementById("btn-load-saved-rules").addEventListener("click", async () => {
+  if (!state.bundle) return;
+  try {
+    const loaded = await loadSavedRulesIntoCurrentFrame();
+    if (!loaded) {
+      document.getElementById("rule-draw-status").textContent = "No saved rules found for this reference frame.";
+    }
+  } catch (error) {
+    document.getElementById("rule-draw-status").textContent = `Load failed: ${error.message}`;
+  }
+});
+
+document.getElementById("btn-save-rules").addEventListener("click", async () => {
+  if (!state.bundle) return;
+  try {
+    const saved = await saveCurrentRulesToService();
+    document.getElementById("rule-draw-status").textContent = saved
+      ? `Saved ${currentReferenceFrame()} rules to the local session service.`
+      : "Local session service is unavailable. Use Export Rules JSON instead.";
+  } catch (error) {
+    document.getElementById("rule-draw-status").textContent = `Save failed: ${error.message}`;
+  }
+});
+
+document.getElementById("rule-file-input").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    await importRulesFromFile(file);
+    document.getElementById("rule-draw-status").textContent = `Imported rules from ${file.name}.`;
+  } catch (error) {
+    document.getElementById("rule-draw-status").textContent = `Import failed: ${error.message}`;
+  } finally {
+    e.target.value = "";
+  }
+});
+
 document.getElementById("btn-apply-rules").addEventListener("click", () => {
   if (!state.bundle) return;
   cancelRuleDrawing();
@@ -3143,6 +3422,16 @@ document.getElementById("btn-reset-rule-preview").addEventListener("click", () =
   if (!state.bundle) return;
   cancelRuleDrawing();
   resetRulePreview();
+  showFrame();
+});
+
+document.getElementById("btn-clear-rules").addEventListener("click", () => {
+  if (!state.bundle) return;
+  replaceCurrentRuleState({ zones: [], tripwires: [] });
+  state.selectedRule = null;
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
   showFrame();
 });
 
@@ -3164,6 +3453,10 @@ document.getElementById("rule-list").addEventListener("input", (e) => {
 });
 
 document.getElementById("rule-list").addEventListener("click", (e) => {
+  const card = e.target.closest(".rule-card");
+  if (card && !e.target.closest(".rule-delete")) {
+    setSelectedRule({ kind: card.dataset.ruleKind, id: card.dataset.ruleId });
+  }
   const button = e.target.closest(".rule-delete");
   if (!button) return;
   const rules = currentRuleState();
@@ -3191,6 +3484,20 @@ updateViewModeUI();
 // Click-to-inspect on 3D boxes (distinguish click from orbit drag)
 renderer.domElement.addEventListener("mousedown", (e) => {
   mouseDownPos = { x: e.clientX, y: e.clientY };
+  if (!state.bundle || isScanlineMode()) return;
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const handleHits = raycaster.intersectObjects(clickableRuleHandles);
+  if (handleHits.length > 0) {
+    const hit = handleHits[0].object;
+    ruleDragState = {
+      selection: hit.userData.ruleSelection,
+      handle: hit.userData.handle,
+    };
+    controls.enabled = false;
+    setSelectedRule(hit.userData.ruleSelection);
+  }
 });
 
 renderer.domElement.addEventListener("mousemove", (e) => {
@@ -3200,12 +3507,40 @@ renderer.domElement.addEventListener("mousemove", (e) => {
   updateLabels();
 });
 
+renderer.domElement.addEventListener("mousemove", (e) => {
+  if (!ruleDragState || isScanlineMode()) return;
+  const point = pointOnGroundPlane(e.clientX, e.clientY);
+  if (!point) return;
+  const rule = ruleBySelection(ruleDragState.selection);
+  if (!rule) return;
+  if (ruleDragState.selection.kind === "zone") {
+    updateZoneHandle(rule, ruleDragState.handle, point);
+  } else if (ruleDragState.selection.kind === "tripwire") {
+    updateTripwireHandle(rule, ruleDragState.handle, point);
+  }
+  if (state.rulePreviewApplied) {
+    applyRulesToReplay();
+  }
+  buildRuleOverlays();
+  updateSidebar();
+});
+
 renderer.domElement.addEventListener("mouseup", (e) => {
   if (!state.bundle || !mouseDownPos) return;
 
   const dx = e.clientX - mouseDownPos.x;
   const dy = e.clientY - mouseDownPos.y;
-  if (dx * dx + dy * dy > 9) return; // moved more than 3px = drag, not click
+  if (ruleDragState) {
+    ruleDragState = null;
+    controls.enabled = true;
+    mouseDownPos = null;
+    showFrame();
+    return;
+  }
+  if (dx * dx + dy * dy > 9) {
+    mouseDownPos = null;
+    return; // moved more than 3px = drag, not click
+  }
 
   if (state.authoring.mode && !isScanlineMode()) {
     const point = pointOnGroundPlane(e.clientX, e.clientY);
@@ -3230,6 +3565,7 @@ renderer.domElement.addEventListener("mouseup", (e) => {
   } else {
     selectObject(null);
   }
+  mouseDownPos = null;
 });
 
 window.addEventListener("resize", () => {
@@ -3251,6 +3587,7 @@ window.addEventListener("keydown", (e) => {
 // ─── Bootstrap ──────────────────────────────────────────────────
 
 async function bootstrap() {
+  await loadServiceSession();
   const params = new URLSearchParams(window.location.search);
   const dataUrl = params.get("data");
   if (dataUrl) {
@@ -3258,6 +3595,12 @@ async function bootstrap() {
       const res = await fetch(dataUrl);
       const bundle = await res.json();
       setBundle(bundle);
+      if (state.serviceSession) {
+        for (const frame of bundle.available_reference_frames || [bundle.reference_frame || "sensor"]) {
+          await loadSavedRulesForFrame(frame);
+        }
+        showFrame();
+      }
     } catch (err) {
       document.getElementById("status-label").textContent = `Load error: ${err.message}`;
     }
