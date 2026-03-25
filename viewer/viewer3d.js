@@ -37,6 +37,11 @@ function isScanlineMode() {
   return state.viewMode === "scanline";
 }
 
+function scanlineModeSupported() {
+  const referenceFrame = state.bundle?.reference_frame || "sensor";
+  return referenceFrame !== "world";
+}
+
 // ─── State ───────────────────────────────────────────────────────
 
 const state = {
@@ -1321,6 +1326,7 @@ function drawRangeDetections(frame, width, height, extents, selectedInfo) {
 }
 
 function renderRangeView(frame, selectedInfo) {
+  if (!scanlineModeSupported()) return;
   if (!rangeCanvas) return;
   const width = Math.max(1, container.clientWidth);
   const height = Math.max(1, container.clientHeight);
@@ -1423,9 +1429,16 @@ function renderRangeView(frame, selectedInfo) {
 function updateViewModeUI() {
   const spatialButton = document.getElementById("btn-view-spatial");
   const scanlineButton = document.getElementById("btn-view-scanline");
+  if (!scanlineModeSupported() && state.viewMode === "scanline") {
+    state.viewMode = "spatial";
+  }
   const spatialActive = state.viewMode === "spatial";
   spatialButton.classList.toggle("is-active", spatialActive);
-  scanlineButton.classList.toggle("is-active", !spatialActive);
+  scanlineButton.classList.toggle("is-active", !spatialActive && scanlineModeSupported());
+  scanlineButton.disabled = !scanlineModeSupported();
+  scanlineButton.title = scanlineModeSupported()
+    ? ""
+    : "Scanline mode is currently only supported for sensor-frame replays.";
   renderer.domElement.style.display = spatialActive ? "block" : "none";
   rangeCanvas.style.display = spatialActive ? "none" : "block";
   labelContainer.style.display = spatialActive ? "block" : "none";
@@ -1600,6 +1613,9 @@ function updateSidebar() {
     ["Reference", referenceFrame],
     ["Frame axes", frameAxes],
   ];
+  if (!scanlineModeSupported()) {
+    rows.push(["Scanline", "disabled in world mode"]);
+  }
   statsEl.innerHTML = rows.map(([k, v]) =>
     `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`
   ).join("");
@@ -1882,6 +1898,7 @@ document.getElementById("btn-view-spatial").addEventListener("click", () => {
 });
 
 document.getElementById("btn-view-scanline").addEventListener("click", () => {
+  if (!scanlineModeSupported()) return;
   state.viewMode = "scanline";
   updateViewModeUI();
   showFrame();
