@@ -1,0 +1,58 @@
+{
+  "zones": [
+    {
+      "zone_id": "car-crossing",
+      "name": "Car Crossing",
+      "min_xy": [
+        -1.0,
+        -0.5
+      ],
+      "max_xy": [
+        2.5,
+        2.2
+      ],
+      "color": "#e8913a",
+      "dwell_alert_seconds": 0.0,
+      "tags": [
+        "mobile",
+        "vehicle"
+      ]
+    },
+    {
+      "zone_id": "north-lane",
+      "name": "North Lane",
+      "min_xy": [
+        -1.5,
+        12.0
+      ],
+      "max_xy": [
+        2.5,
+        18.0
+      ],
+      "color": "#59b8ff",
+      "dwell_alert_seconds": 0.0,
+      "tags": [
+        "mobile",
+        "lane"
+      ]
+    },
+    {
+      "zone_id": "pedestrian-hold",
+      "name": "Pedestrian Hold",
+      "min_xy": [
+        -36.8,
+        -6.3
+      ],
+      "max_xy": [
+        -34.8,
+        -4.3
+      ],
+      "color": "#3dcc7a",
+      "dwell_alert_seconds": 0.25,
+      "tags": [
+        "mobile",
+        "pedestrian"
+      ]
+    }
+  ]
+}
