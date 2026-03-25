@@ -16,6 +16,7 @@ class Frame:
     sensor_frame_id: int | None = None
     scanline_shape: tuple[int, int] | None = None
     scanline_points: list[ScanSample] | None = None
+    scanline_pixel_shift_by_row: list[int] | None = None
 
 
 @dataclass(slots=True)

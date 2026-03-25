@@ -160,6 +160,9 @@ class IntegrationTests(unittest.TestCase):
             self.assertGreater(len(frame.points), 1000)
             self.assertGreater(frame.timestamp_ns, 0)
             self.assertTrue(frame.frame_id.startswith("pcap_"))
+            self.assertEqual(frame.scanline_shape, (128, 1024))
+            self.assertEqual(len(frame.scanline_pixel_shift_by_row or []), 128)
+            self.assertGreater(len(frame.scanline_points or []), 1000)
             # Verify points are within bounds
             for x, y, z in frame.points[:10]:
                 self.assertGreaterEqual(z, -2.5)

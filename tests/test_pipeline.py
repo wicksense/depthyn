@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from depthyn.detectors.base import DetectorResult
 from depthyn.config import ReplayConfig
-from depthyn.models import Detection
+from depthyn.models import Detection, Frame
 from depthyn.pipeline import run_replay
 
 
@@ -251,6 +251,45 @@ class PipelineTests(unittest.TestCase):
             self.assertAlmostEqual(frame_summary["preview_points"][0][1], 0.0, places=5)
             self.assertAlmostEqual(frame_summary["detections"][0]["centroid"][0], 12.0, places=5)
             self.assertAlmostEqual(frame_summary["active_tracks"][0]["centroid"][0], 12.0, places=5)
+
+    def test_replay_carries_scanline_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fake_frame = Frame(
+                frame_id="pcap_fake_000001",
+                timestamp_ns=1_000_000_000,
+                points=[(1.0, 0.0, 0.5)],
+                source_path=root / "capture.pcap",
+                scanline_shape=(4, 8),
+                scanline_points=[(0, 1, 1.0, 0.0, 0.5, 5.0)],
+                scanline_pixel_shift_by_row=[0, 1, 2, 3],
+            )
+            fake_detector = _RecordingDetector(input_mode="full")
+
+            with patch("depthyn.pipeline._stream_frames", return_value=iter([fake_frame])):
+                with patch("depthyn.pipeline.create_detector", return_value=fake_detector):
+                    summary = run_replay(
+                        ReplayConfig(
+                            input_dir=root,
+                            output_json=root / "summary.json",
+                            source_type="pcap",
+                            preview_point_limit=10,
+                            detail_point_limit=10,
+                        )
+                    )
+
+            self.assertEqual(
+                summary["scanline_metadata"],
+                {
+                    "shape": [4, 8],
+                    "pixel_shift_by_row": [0, 1, 2, 3],
+                },
+            )
+            self.assertEqual(summary["frame_summaries"][0]["scanline_shape"], [4, 8])
+            self.assertEqual(
+                summary["frame_summaries"][0]["scanline_points"],
+                [[0, 1, 1.0, 0.0, 0.5, 5.0]],
+            )
 
     def _write_frame(
         self, path: Path, rows: list[tuple[int, float, float, float]]

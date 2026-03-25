@@ -215,6 +215,94 @@ function scanlinePointsForFrame(frame) {
   return frame?.scanline_points || [];
 }
 
+function scanlineShapeForFrame(frame) {
+  return frame?.scanline_shape || state.bundle?.scanline_metadata?.shape || null;
+}
+
+function scanlineShifts() {
+  return state.bundle?.scanline_metadata?.pixel_shift_by_row || [];
+}
+
+function mod(value, base) {
+  return ((value % base) + base) % base;
+}
+
+function destaggeredSampleColumn(frame, sample) {
+  const shape = scanlineShapeForFrame(frame);
+  if (!shape) return sample[1];
+  const shifts = scanlineShifts();
+  const shift = shifts[sample[0]] || 0;
+  return mod(sample[1] + shift, shape[1]);
+}
+
+function scanlineCellGeometry(frame, sample, width, height, padding = 0) {
+  const shape = scanlineShapeForFrame(frame);
+  if (!shape) {
+    return { x: 0, y: 0, cellWidth: width, cellHeight: height };
+  }
+  const rows = Math.max(1, shape[0]);
+  const cols = Math.max(1, shape[1]);
+  const innerWidth = Math.max(1, width - padding * 2);
+  const innerHeight = Math.max(1, height - padding * 2);
+  const cellWidth = innerWidth / cols;
+  const cellHeight = innerHeight / rows;
+  const destaggeredCol = destaggeredSampleColumn(frame, sample);
+  return {
+    x: padding + destaggeredCol * cellWidth,
+    y: padding + sample[0] * cellHeight,
+    cellWidth,
+    cellHeight,
+  };
+}
+
+function circularColumnSegments(columns, totalCols) {
+  if (!columns.length || totalCols <= 0) return [];
+  const sorted = [...new Set(columns.map((value) => mod(value, totalCols)))].sort((a, b) => a - b);
+  if (sorted.length === 1) {
+    return [[sorted[0], sorted[0]]];
+  }
+  let maxGap = -1;
+  let maxGapIndex = 0;
+  for (let index = 0; index < sorted.length; index++) {
+    const current = sorted[index];
+    const next = sorted[(index + 1) % sorted.length] + (index === sorted.length - 1 ? totalCols : 0);
+    const gap = next - current;
+    if (gap > maxGap) {
+      maxGap = gap;
+      maxGapIndex = index;
+    }
+  }
+  const start = sorted[(maxGapIndex + 1) % sorted.length];
+  const end = sorted[maxGapIndex];
+  if (start <= end) {
+    return [[start, end]];
+  }
+  return [
+    [0, end],
+    [start, totalCols - 1],
+  ];
+}
+
+function drawScanlineSampleSet(frame, samples, color, alpha, width, height, options = {}) {
+  if (!samples.length) return;
+  const padding = options.padding || 0;
+  const scale = options.scale || 1;
+  rangeCtx.fillStyle = color;
+  rangeCtx.globalAlpha = alpha;
+  for (const sample of samples) {
+    const cell = scanlineCellGeometry(frame, sample, width, height, padding);
+    const drawWidth = Math.max(1, cell.cellWidth * scale);
+    const drawHeight = Math.max(1, cell.cellHeight * scale);
+    rangeCtx.fillRect(
+      cell.x - (drawWidth - cell.cellWidth) / 2,
+      cell.y - (drawHeight - cell.cellHeight) / 2,
+      drawWidth,
+      drawHeight,
+    );
+  }
+  rangeCtx.globalAlpha = 1;
+}
+
 function buildPointCloud(displayPoints, ownershipPoints, detections = [], selectedInfo = null) {
   if (pointCloud) {
     scene.remove(pointCloud);
@@ -999,7 +1087,7 @@ function showInspectPanel(det, tracks) {
   const currentFrame = state.bundle?.frame_summaries?.[state.frameIndex];
   const structuredSamples = currentFrame ? ownedScanlineSamplesForDetection(currentFrame, det.detection_id) : [];
   if (structuredSamples.length && currentFrame?.scanline_shape) {
-    renderInspectStructuredScanline(structuredSamples, currentFrame.scanline_shape, det.label);
+    renderInspectStructuredScanline(currentFrame, structuredSamples, det.label);
   } else {
     renderInspectScanline(ownedPointsForDetection(det.detection_id), det.label);
   }
@@ -1102,6 +1190,114 @@ function sensorSpaceDetection(frame, detection) {
   };
 }
 
+function detectionDimensions(detection) {
+  return {
+    sx: detection.bbox_max[0] - detection.bbox_min[0],
+    sy: detection.bbox_max[1] - detection.bbox_min[1],
+    sz: detection.bbox_max[2] - detection.bbox_min[2],
+  };
+}
+
+function detectionBoundingCorners(detection) {
+  const { sx, sy, sz } = detectionDimensions(detection);
+  const heading = detection.heading_rad || 0;
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  const halfX = sx / 2;
+  const halfY = sy / 2;
+  const halfZ = sz / 2;
+  const corners = [];
+  for (const dx of [-halfX, halfX]) {
+    for (const dy of [-halfY, halfY]) {
+      for (const dz of [-halfZ, halfZ]) {
+        corners.push([
+          detection.centroid[0] + dx * cos - dy * sin,
+          detection.centroid[1] + dx * sin + dy * cos,
+          detection.centroid[2] + dz,
+        ]);
+      }
+    }
+  }
+  return corners;
+}
+
+function azimuthToDestaggeredColumn(angle, totalCols) {
+  const normalized = mod((angle + Math.PI) / (Math.PI * 2), 1);
+  return mod(Math.round(normalized * Math.max(1, totalCols - 1)), totalCols);
+}
+
+function rowElevations(frame) {
+  const shape = scanlineShapeForFrame(frame);
+  if (!shape) return [];
+  const rows = shape[0];
+  const sums = new Array(rows).fill(0);
+  const counts = new Array(rows).fill(0);
+  for (const sample of scanlinePointsForFrame(frame)) {
+    const elevation = Math.atan2(sample[4], Math.hypot(sample[2], sample[3]));
+    sums[sample[0]] += elevation;
+    counts[sample[0]] += 1;
+  }
+  const result = new Array(rows).fill(0);
+  let lastKnown = 0;
+  for (let index = 0; index < rows; index++) {
+    if (counts[index] > 0) {
+      lastKnown = sums[index] / counts[index];
+    }
+    result[index] = lastKnown;
+  }
+  for (let index = rows - 1; index >= 0; index--) {
+    if (counts[index] > 0) {
+      lastKnown = sums[index] / counts[index];
+    }
+    if (counts[index] === 0) {
+      result[index] = lastKnown;
+    }
+  }
+  return result;
+}
+
+function nearestRowForElevation(elevations, target) {
+  if (!elevations.length) return 0;
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < elevations.length; index++) {
+    const distance = Math.abs(elevations[index] - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function scanlineDetectionBounds(frame, detection, ownedSamples) {
+  const shape = scanlineShapeForFrame(frame);
+  if (!shape) return null;
+  const sensorDetection = sensorSpaceDetection(frame, detection);
+  const corners = detectionBoundingCorners(sensorDetection);
+  const cols = corners.map((corner) =>
+    azimuthToDestaggeredColumn(Math.atan2(corner[1], corner[0]), shape[1])
+  );
+  const segments = circularColumnSegments(cols, shape[1]);
+  let rowMin = 0;
+  let rowMax = shape[0] - 1;
+  if (ownedSamples.length) {
+    rowMin = Math.min(...ownedSamples.map((sample) => sample[0]));
+    rowMax = Math.max(...ownedSamples.map((sample) => sample[0]));
+  } else {
+    const elevations = rowElevations(frame);
+    const cornerElevations = corners.map((corner) =>
+      Math.atan2(corner[2], Math.hypot(corner[0], corner[1]))
+    );
+    rowMin = nearestRowForElevation(elevations, Math.min(...cornerElevations));
+    rowMax = nearestRowForElevation(elevations, Math.max(...cornerElevations));
+    if (rowMin > rowMax) {
+      [rowMin, rowMax] = [rowMax, rowMin];
+    }
+  }
+  return { rowMin, rowMax, segments };
+}
+
 function assignScanlineOwner(sample, detections) {
   if (!detections?.length) return null;
   const point = [sample[2], sample[3], sample[4]];
@@ -1190,7 +1386,7 @@ function renderInspectScanline(points, label) {
   ctx.fillText(`${points.length} pts`, width - 58, 18);
 }
 
-function renderInspectStructuredScanline(samples, shape, label) {
+function renderInspectStructuredScanline(frame, samples, label) {
   const canvas = document.getElementById("inspect-scanline");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -1201,22 +1397,23 @@ function renderInspectStructuredScanline(samples, shape, label) {
   ctx.fillStyle = "rgba(8, 10, 14, 0.96)";
   ctx.fillRect(0, 0, width, height);
 
+  const shape = scanlineShapeForFrame(frame);
   if (!samples.length || !shape) {
     renderInspectScanline([], label);
     return;
   }
 
-  const rows = shape[0] || 1;
-  const cols = shape[1] || 1;
   const color = labelColor(label).hex;
   ctx.fillStyle = color;
   for (const sample of samples) {
-    const x = (sample[1] / Math.max(1, cols - 1)) * (width - 18) + 9;
-    const y = (sample[0] / Math.max(1, rows - 1)) * (height - 18) + 9;
+    const cell = scanlineCellGeometry(frame, sample, width, height, 9);
     ctx.globalAlpha = 0.82;
-    ctx.beginPath();
-    ctx.arc(x, y, 1.8, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillRect(
+      cell.x,
+      cell.y,
+      Math.max(1, cell.cellWidth),
+      Math.max(1, cell.cellHeight),
+    );
   }
   ctx.globalAlpha = 1;
   ctx.fillStyle = "rgba(212, 216, 228, 0.72)";
@@ -1289,26 +1486,52 @@ function drawRangePointSet(points, color, radius, alpha, width, height, extents)
 function drawRangeDetections(frame, width, height, extents, selectedInfo) {
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
   const scanlineSamples = scanlinePointsForFrame(frame);
-  const scanShape = frame.scanline_shape || null;
+  const scanShape = scanlineShapeForFrame(frame);
   for (const detection of frame.detections) {
     if (!isLabelVisible(detection.label)) continue;
-    const canvasPoints = scanlineSamples.length && scanShape
-      ? ownedScanlineSamplesForDetection(frame, detection.detection_id).map((sample) => ({
-          x: (sample[1] / Math.max(1, scanShape[1] - 1)) * width,
-          y: (sample[0] / Math.max(1, scanShape[0] - 1)) * height,
-        }))
-      : ownedPointsForDetection(detection.detection_id).map((point) => rangePointToCanvas(point.sourcePosition, width, height, extents));
-    if (!canvasPoints.length) continue;
+    const isSelected = detection.detection_id === selectedDetId;
+    const color = isSelected ? "#fff0c2" : labelColor(detection.label).hex;
+    if (scanlineSamples.length && scanShape) {
+      const ownedSamples = ownedScanlineSamplesForDetection(frame, detection.detection_id);
+      const bounds = scanlineDetectionBounds(frame, detection, ownedSamples);
+      if (!bounds) continue;
+      const { rowMin, rowMax, segments } = bounds;
+      const rowHeight = height / Math.max(1, scanShape[0]);
+      const colWidth = width / Math.max(1, scanShape[1]);
+      rangeCtx.strokeStyle = color;
+      rangeCtx.lineWidth = isSelected ? 2.2 : 1.2;
+      rangeCtx.fillStyle = color;
+      rangeCtx.font = isSelected ? "700 12px Inter, sans-serif" : "600 11px Inter, sans-serif";
+      const scoreText = detection.score != null ? ` ${Math.round(detection.score * 100)}%` : "";
+      let labelDrawn = false;
+      for (const [startCol, endCol] of segments) {
+        const minX = Math.max(4, startCol * colWidth - 4);
+        const maxX = Math.min(width - 4, (endCol + 1) * colWidth + 4);
+        const minY = Math.max(4, rowMin * rowHeight - 4);
+        const maxY = Math.min(height - 4, (rowMax + 1) * rowHeight + 4);
+        rangeCtx.globalAlpha = isSelected ? 0.95 : 0.55;
+        rangeCtx.strokeRect(minX, minY, Math.max(6, maxX - minX), Math.max(6, maxY - minY));
+        rangeCtx.globalAlpha = isSelected ? 0.16 : 0.06;
+        rangeCtx.fillRect(minX, minY, Math.max(6, maxX - minX), Math.max(6, maxY - minY));
+        rangeCtx.globalAlpha = 1;
+        if (!labelDrawn) {
+          rangeCtx.fillText(`${formatLabel(detection.label)}${scoreText}`, minX, Math.max(14, minY - 6));
+          labelDrawn = true;
+        }
+      }
+      continue;
+    }
 
+    const canvasPoints = ownedPointsForDetection(detection.detection_id).map((point) =>
+      rangePointToCanvas(point.sourcePosition, width, height, extents)
+    );
+    if (!canvasPoints.length) continue;
     const xs = canvasPoints.map((point) => point.x);
     const ys = canvasPoints.map((point) => point.y);
     const minX = Math.max(8, Math.min(...xs) - 8);
     const maxX = Math.min(width - 8, Math.max(...xs) + 8);
     const minY = Math.max(8, Math.min(...ys) - 8);
     const maxY = Math.min(height - 8, Math.max(...ys) + 8);
-    const isSelected = detection.detection_id === selectedDetId;
-    const color = isSelected ? "#fff0c2" : labelColor(detection.label).hex;
-
     rangeCtx.strokeStyle = color;
     rangeCtx.lineWidth = isSelected ? 2.2 : 1.2;
     rangeCtx.globalAlpha = isSelected ? 0.95 : 0.55;
@@ -1317,7 +1540,6 @@ function drawRangeDetections(frame, width, height, extents, selectedInfo) {
     rangeCtx.fillStyle = color;
     rangeCtx.fillRect(minX, minY, Math.max(6, maxX - minX), Math.max(6, maxY - minY));
     rangeCtx.globalAlpha = 1;
-
     rangeCtx.fillStyle = color;
     rangeCtx.font = isSelected ? "700 12px Inter, sans-serif" : "600 11px Inter, sans-serif";
     const scoreText = detection.score != null ? ` ${Math.round(detection.score * 100)}%` : "";
@@ -1342,23 +1564,14 @@ function renderRangeView(frame, selectedInfo) {
 
   const points = detailPointsForFrame(frame);
   const scanlineSamples = scanlinePointsForFrame(frame);
-  const scanShape = frame.scanline_shape || null;
+  const scanShape = scanlineShapeForFrame(frame);
   const extents = rangeFrameExtents(points);
   const selectedDetId = selectedInfo?.detection?.detection_id || null;
   const visibleDetections = frame.detections.filter((detection) => isLabelVisible(detection.label));
 
   if (state.overlays.rawPoints) {
     if (scanlineSamples.length && scanShape) {
-      rangeCtx.fillStyle = "rgba(139,111,191,1)";
-      rangeCtx.globalAlpha = 0.38;
-      for (const sample of scanlineSamples) {
-        const x = (sample[1] / Math.max(1, scanShape[1] - 1)) * width;
-        const y = (sample[0] / Math.max(1, scanShape[0] - 1)) * height;
-        rangeCtx.beginPath();
-        rangeCtx.arc(x, y, 1.1, 0, Math.PI * 2);
-        rangeCtx.fill();
-      }
-      rangeCtx.globalAlpha = 1;
+      drawScanlineSampleSet(frame, scanlineSamples, "rgba(139,111,191,1)", 0.42, width, height);
     } else {
       drawRangePointSet(points, "rgba(139,111,191,1)", 1.1, 0.38, width, height, extents);
     }
@@ -1370,17 +1583,15 @@ function renderRangeView(frame, selectedInfo) {
       if (scanlineSamples.length && scanShape) {
         const ownedSamples = ownedScanlineSamplesForDetection(frame, detection.detection_id);
         if (!ownedSamples.length) continue;
-        rangeCtx.fillStyle = labelColor(detection.label).hex;
-        rangeCtx.globalAlpha = isSelected ? 0.95 : (selectedInfo ? 0.32 : 0.78);
-        const radius = isSelected ? 2.0 : 1.6;
-        for (const sample of ownedSamples) {
-          const x = (sample[1] / Math.max(1, scanShape[1] - 1)) * width;
-          const y = (sample[0] / Math.max(1, scanShape[0] - 1)) * height;
-          rangeCtx.beginPath();
-          rangeCtx.arc(x, y, radius, 0, Math.PI * 2);
-          rangeCtx.fill();
-        }
-        rangeCtx.globalAlpha = 1;
+        drawScanlineSampleSet(
+          frame,
+          ownedSamples,
+          labelColor(detection.label).hex,
+          isSelected ? 0.95 : (selectedInfo ? 0.32 : 0.82),
+          width,
+          height,
+          { scale: isSelected ? 1.4 : 1.2 },
+        );
       } else {
         const ownedPoints = ownedPointsForDetection(detection.detection_id).map((point) => point.sourcePosition);
         if (!ownedPoints.length) continue;
@@ -1400,16 +1611,7 @@ function renderRangeView(frame, selectedInfo) {
   if (state.overlays.selectedPoints && selectedInfo?.detection) {
     if (scanlineSamples.length && scanShape) {
       const ownedSamples = ownedScanlineSamplesForDetection(frame, selectedInfo.detection.detection_id);
-      rangeCtx.fillStyle = "#fff5b8";
-      rangeCtx.globalAlpha = 0.95;
-      for (const sample of ownedSamples) {
-        const x = (sample[1] / Math.max(1, scanShape[1] - 1)) * width;
-        const y = (sample[0] / Math.max(1, scanShape[0] - 1)) * height;
-        rangeCtx.beginPath();
-        rangeCtx.arc(x, y, 2.4, 0, Math.PI * 2);
-        rangeCtx.fill();
-      }
-      rangeCtx.globalAlpha = 1;
+      drawScanlineSampleSet(frame, ownedSamples, "#fff5b8", 0.95, width, height, { scale: 1.7 });
     } else {
       const ownedPoints = ownedPointsForDetection(selectedInfo.detection.detection_id).map((point) => point.sourcePosition);
       drawRangePointSet(ownedPoints, "#fff5b8", 2.4, 0.95, width, height, extents);
@@ -1550,7 +1752,7 @@ function showTrackPanel(track) {
     ? ownedScanlineSamplesForDetection(currentFrame, matchedDetection.detection_id)
     : [];
   if (structuredSamples.length && currentFrame?.scanline_shape) {
-    renderInspectStructuredScanline(structuredSamples, currentFrame.scanline_shape, matchedDetection?.label || track.label);
+    renderInspectStructuredScanline(currentFrame, structuredSamples, matchedDetection?.label || track.label);
   } else {
     renderInspectScanline(
       matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],
@@ -1818,7 +2020,7 @@ function showFrame() {
   if (selectedInfo?.detection) {
     const structuredSamples = ownedScanlineSamplesForDetection(frame, selectedInfo.detection.detection_id);
     if (structuredSamples.length && frame.scanline_shape) {
-      renderInspectStructuredScanline(structuredSamples, frame.scanline_shape, selectedInfo.detection.label);
+      renderInspectStructuredScanline(frame, structuredSamples, selectedInfo.detection.label);
     } else {
       renderInspectScanline(ownedPointsForDetection(selectedInfo.detection.detection_id), selectedInfo.detection.label);
     }
@@ -1828,7 +2030,7 @@ function showFrame() {
       ? ownedScanlineSamplesForDetection(frame, matchedDetection.detection_id)
       : [];
     if (structuredSamples.length && frame.scanline_shape) {
-      renderInspectStructuredScanline(structuredSamples, frame.scanline_shape, matchedDetection?.label || selectedInfo.track.label);
+      renderInspectStructuredScanline(frame, structuredSamples, matchedDetection?.label || selectedInfo.track.label);
     } else {
       renderInspectScanline(
         matchedDetection ? ownedPointsForDetection(matchedDetection.detection_id) : [],

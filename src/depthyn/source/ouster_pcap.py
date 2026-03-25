@@ -114,6 +114,7 @@ def iter_ouster_pcap_frames(
         source = open_source(str(pcap_path), meta=[str(metadata_path)])
         sensor_info = source.sensor_info[0]
         xyz_lut = XYZLut(sensor_info)
+        pixel_shift_by_row = [int(value) for value in sensor_info.format.pixel_shift_by_row]
 
         for scan_set in source:
             if max_frames is not None and frame_count >= max_frames:
@@ -205,6 +206,7 @@ def iter_ouster_pcap_frames(
                     sensor_frame_id=sensor_fid,
                     scanline_shape=(height, width),
                     scanline_points=scanline_points,
+                    scanline_pixel_shift_by_row=pixel_shift_by_row,
                 )
                 frame_count += 1
 

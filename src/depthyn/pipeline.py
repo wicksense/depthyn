@@ -136,6 +136,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
     all_zone_events: list[dict[str, object]] = []
     scene_min = [float("inf"), float("inf"), float("inf")]
     scene_max = [float("-inf"), float("-inf"), float("-inf")]
+    scanline_metadata: dict[str, object] | None = None
 
     frame_count = 0
     for frame_index, frame in enumerate(_stream_frames(config)):
@@ -215,6 +216,11 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
             frame.scanline_points or [],
             config.detail_point_limit,
         )
+        if scanline_metadata is None and frame.scanline_shape is not None:
+            scanline_metadata = {
+                "shape": list(frame.scanline_shape),
+                "pixel_shift_by_row": list(frame.scanline_pixel_shift_by_row or []),
+            }
         active_track_payload = [track.to_dict() for track in active_tracks]
         scene_state = build_scene_state(
             frame_index=frame_index,
@@ -279,6 +285,7 @@ def run_replay(config: ReplayConfig) -> dict[str, object]:
         "world_alignment": (
             None if pose_provider is None else pose_provider.metadata()
         ),
+        "scanline_metadata": scanline_metadata,
         "scene_contract": {
             "version": "v1",
             "object_source": "tracked_objects",
